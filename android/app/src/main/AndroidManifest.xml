@@ -3,7 +3,9 @@
     <application
         android:label="app_movil_logistica"
         android:name="${applicationName}"
+        android:allowBackup="false"
         android:icon="@mipmap/ic_launcher">
+        
         <activity
             android:name=".MainActivity"
             android:exported="true"

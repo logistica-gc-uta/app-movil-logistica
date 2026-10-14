@@ -48,3 +48,6 @@ app.*.map.json
 # Configuración local: nunca subir secretos
 .env
 .env.*
+
+#Reportes temporales de Gradle
+/android/build/
