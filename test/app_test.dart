@@ -4,6 +4,7 @@ import 'package:app_movil_logistica/app.dart';
 import 'package:app_movil_logistica/core/network/api_client.dart';
 import 'package:app_movil_logistica/core/network/api_exception.dart';
 import 'package:app_movil_logistica/features/auth/data/auth_service.dart';
+import 'package:app_movil_logistica/features/auth/data/auth_session.dart';
 import 'package:app_movil_logistica/features/auth/data/onboarding_storage.dart';
 import 'package:app_movil_logistica/features/auth/data/session_storage.dart';
 import 'package:flutter/material.dart';
@@ -33,6 +34,9 @@ void main() {
           if (request.method == 'POST') {
             return loginResponse;
           }
+          if (request.url.path.endsWith('/drivers/me/routes')) {
+            return http.Response('[]', 200);
+          }
           return http.Response('{}', 401);
         }),
       ),
@@ -48,6 +52,7 @@ void main() {
   Future<void> login(WidgetTester tester) async {
     await tester.enterText(find.byType(TextFormField).first, 'a@test.com');
     await tester.enterText(find.byType(TextFormField).last, 'secreto');
+    await tester.ensureVisible(find.text('Ingresar al turno'));
     await tester.tap(find.text('Ingresar al turno'));
     await tester.pumpAndSettle();
   }
@@ -57,18 +62,35 @@ void main() {
     await OnboardingStorage().markWelcomeSeen();
   });
 
-  testWidgets('el selector cambia la paleta y se recuerda al reabrir', (
+  testWidgets('el botón Invertir alterna y se recuerda al reabrir', (
     tester,
   ) async {
     await openApp(tester);
-    expect(find.text('Coral'), findsOneWidget);
+    expect(find.text('Invertir'), findsOneWidget);
 
-    await tester.tap(find.text('Coral'));
+    await tester.tap(find.text('Invertir'));
     await tester.pumpAndSettle();
-    expect(find.text('Naranja'), findsOneWidget);
+    expect(find.text('Normal'), findsOneWidget);
 
     await openApp(tester);
-    expect(find.text('Naranja'), findsOneWidget);
+    expect(find.text('Normal'), findsOneWidget);
+  });
+
+  testWidgets('con sesión guardada sin bienvenida vista, la muestra antes', (
+    tester,
+  ) async {
+    FlutterSecureStorage.setMockInitialValues({});
+    final session = AuthSession.fromJson(
+      jsonDecode(loginResponse.body) as Map<String, dynamic>,
+    );
+    await tester.runAsync(() => SessionStorage().save(session));
+
+    await openApp(tester);
+    expect(find.text('Bienvenido'), findsOneWidget);
+
+    await tester.tap(find.text('Continuar'));
+    await tester.pumpAndSettle();
+    expect(find.text('Hola, Carlos Chofer'), findsOneWidget);
   });
 
   testWidgets('la primera vez muestra la bienvenida y después ya no', (
@@ -81,18 +103,18 @@ void main() {
 
     await tester.tap(find.text('Continuar'));
     await tester.pumpAndSettle();
-    expect(find.text('Iniciar sesión'), findsOneWidget);
+    expect(find.text('INICIAR SESIÓN'), findsOneWidget);
 
     await openApp(tester);
     expect(find.text('Bienvenido'), findsNothing);
-    expect(find.text('Iniciar sesión'), findsOneWidget);
+    expect(find.text('INICIAR SESIÓN'), findsOneWidget);
   });
 
   testWidgets('sin sesión muestra el login y al entrar abre Mi Ruta del Día', (
     tester,
   ) async {
     await openApp(tester);
-    expect(find.text('Iniciar sesión'), findsOneWidget);
+    expect(find.text('INICIAR SESIÓN'), findsOneWidget);
 
     await login(tester);
 
@@ -108,7 +130,7 @@ void main() {
     await openApp(tester);
 
     expect(find.text('Hola, Carlos Chofer'), findsOneWidget);
-    expect(find.text('Iniciar sesión'), findsNothing);
+    expect(find.text('INICIAR SESIÓN'), findsNothing);
   });
 
   testWidgets('cerrar sesión vuelve al login y no se conserva', (tester) async {
@@ -117,10 +139,10 @@ void main() {
 
     await tester.tap(find.byIcon(Icons.logout));
     await tester.pumpAndSettle();
-    expect(find.text('Iniciar sesión'), findsOneWidget);
+    expect(find.text('INICIAR SESIÓN'), findsOneWidget);
 
     await openApp(tester);
-    expect(find.text('Iniciar sesión'), findsOneWidget);
+    expect(find.text('INICIAR SESIÓN'), findsOneWidget);
   });
 
   testWidgets('si el token caduca (401) vuelve al login con un aviso', (
@@ -130,7 +152,7 @@ void main() {
     await login(tester);
 
     await expectLater(
-      authService.apiClient.get('/drivers/me/routes'),
+      authService.apiClient.get('/orders/123'),
       throwsA(isA<ApiException>()),
     );
     await tester.pumpAndSettle();

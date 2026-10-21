@@ -2,7 +2,7 @@
 
 App móvil en Flutter (Android) para el chofer del sistema de logística y entrega de pedidos. Consume la API del [backend](https://github.com/logistica-gc-uta/backend).
 
-**Estado actual:** inicio de sesión del chofer implementado. «Mi Ruta del Día» (issue #3) todavía no: tras iniciar sesión la app muestra una pantalla provisional con un saludo y el botón de cerrar sesión.
+**Estado actual:** inicio de sesión del chofer y pantalla «Mi Ruta del Día» implementados. El botón «Iniciar ruta» (issue #4) y el registro de entregas fallidas (issue #8) todavía no.
 
 ## Requisitos
 
@@ -97,10 +97,21 @@ La app consume `POST /auth/login` y solo deja entrar a usuarios con rol `DRIVER`
 - **Cierre de sesión:** el botón de la barra superior borra la sesión guardada y el token.
 - **Privacidad:** la app no escribe en los logs el token ni la contraseña, y la copia de seguridad de Android está desactivada (`android:allowBackup="false"`) para que el token no salga del teléfono.
 
+## Mi Ruta del Día
+
+Tras iniciar sesión, la app consulta `GET /drivers/me/routes?date=YYYY-MM-DD` con la fecha de hoy en Ecuador (UTC-5). El backend identifica al chofer por el token, así que nunca se ven rutas de otros choferes.
+
+- **Contenido:** cada ruta muestra su zona, su estado y sus paradas ordenadas por `stopOrder`, con la dirección y el estado del pedido. El progreso usa el resultado persistido de la visita; una entrega posterior en otra ruta no convierte una visita fallida en exitosa. Solo las rutas antiguas sin visitas persistidas usan el estado comercial como respaldo.
+- **Estados de pantalla:** cargando, error con botón «Reintentar» y «No tienes rutas para hoy». Se puede deslizar hacia abajo para actualizar. Si falla una recarga, se conserva la ruta consultada y se muestra el error. Si el servidor confirmó una mutación pero falla el GET posterior, se avisa que la lista no está actualizada.
+- **Acciones:** con la ruta en curso (`IN_PROGRESS`), cada pedido ofrece «En camino» (`ASSIGNED` → `IN_TRANSIT`) y luego «Entregado» (`IN_TRANSIT` → `DELIVERED`) mediante `PATCH /orders/:id/status`. La lista se refresca después de que el servidor confirma el cambio; si el servidor lo rechaza, se muestra el motivo y no un éxito.
+- **Ruta sin iniciar:** el backend solo acepta esas acciones con la ruta iniciada, así que con la ruta `ASSIGNED` la app muestra un aviso en lugar de los botones. El inicio de ruta es la issue #4.
+
+Para probarla hace falta una ruta asignada al chofer de prueba para el día de hoy (desde el panel web de administración o con los datos de demostración del backend).
+
 ### Bienvenida y colores
 
-- **Bienvenida:** la primera vez que se abre la app se muestra una pantalla de bienvenida. Al pulsar «Continuar» se guarda en el teléfono que ya se vio y no vuelve a aparecer, ni siquiera tras cerrar sesión. Para verla de nuevo hay que borrar los datos de la app (Ajustes → Apps → Almacenamiento → Borrar datos).
-- **Paleta de colores:** el botón flotante de la parte superior cambia entre Coral (`#FF8383`, por defecto), Naranja (`#FF6940`) y Negro (`#141310`). La elección se guarda en el teléfono.
+- **Bienvenida:** la primera vez que se abre la app se muestra una pantalla de bienvenida. Al pulsar «Continuar» se guarda en el teléfono que ya se vio y no vuelve a aparecer, ni siquiera tras cerrar sesión. Para verla de nuevo hay que borrar los datos de la app (Ajustes → Apps → Almacenamiento → Borrar datos). Para revisar su diseño mientras desarrollas, ejecuta la app con `flutter run --dart-define=ALWAYS_SHOW_WELCOME=true` y aparecerá en cada arranque.
+- **Invertir colores:** el botón «Invertir» de la esquina superior derecha intercambia el blanco y el negro de la bienvenida y del inicio de sesión. La elección se guarda en el teléfono.
 
 ### Probar contra el backend local
 
@@ -123,16 +134,17 @@ lib/
 ├── core/                      Código compartido por toda la app
 │   ├── config/                AppConfig: URL base de la API
 │   ├── network/               ApiClient (cliente HTTP) y ApiException
-│   ├── theme/                 Tema visual, paletas de colores y PaletteStorage
-│   └── widgets/               TopoHeader: cabecera con líneas topográficas
+│   ├── theme/                 Tema visual, BrandColors y BrandStorage
+│   └── widgets/               BrandWordmark (marca) y PrimaryButton
 └── features/                  Una carpeta por funcionalidad
     ├── auth/
     │   ├── data/              AuthSession, SessionStorage, AuthService y OnboardingStorage
     │   └── presentation/      WelcomePage y LoginPage
     └── routes/
-        └── presentation/      MyRoutePage (provisional, issue #3)
+        ├── data/              DriverRoute (ruta y paradas) y RoutesService
+        └── presentation/      MyRoutePage
 test/                          Pruebas; replica la estructura de lib/
-assets/fonts/                  Tipografía Rubik (licencia OFL)
+assets/fonts/                  Tipografía Inter (licencia OFL)
 ```
 
 Las pantallas no llaman al paquete `http` directamente: usan `ApiClient`, que antepone la URL base, decodifica el JSON y lanza `ApiException` cuando el servidor responde con error. Las reglas del login (rol, mensajes, guardado) están en `AuthService`, no en la pantalla.
@@ -148,6 +160,8 @@ flutter test
 ```
 
 Las reglas de análisis están en `analysis_options.yaml`. Las pruebas usan un servidor y un almacenamiento simulados, así que no necesitan backend ni dispositivo.
+
+La prueba adicional `integration_test/daily_route_test.dart` usa Android, NestJS y PostgreSQL reales con una base aislada y datos ficticios. Ver [evidencia y reproducción de la issue #3](docs/evidence/issue-3/README.md).
 
 ## Flujo de trabajo
 

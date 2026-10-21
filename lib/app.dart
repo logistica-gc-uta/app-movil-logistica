@@ -1,33 +1,69 @@
+import 'package:app_movil_logistica/core/config/app_config.dart';
 import 'package:app_movil_logistica/core/theme/app_theme.dart';
-import 'package:app_movil_logistica/core/theme/palette_storage.dart';
+import 'package:app_movil_logistica/core/theme/brand_storage.dart';
 import 'package:app_movil_logistica/features/auth/data/auth_service.dart';
 import 'package:app_movil_logistica/features/auth/data/auth_session.dart';
 import 'package:app_movil_logistica/features/auth/data/onboarding_storage.dart';
 import 'package:app_movil_logistica/features/auth/presentation/login_page.dart';
 import 'package:app_movil_logistica/features/auth/presentation/welcome_page.dart';
+import 'package:app_movil_logistica/features/routes/data/routes_service.dart';
 import 'package:app_movil_logistica/features/routes/presentation/my_route_page.dart';
 import 'package:flutter/material.dart';
+
+enum _Screen { welcome, login, route }
+
+/// Efecto de "pasar página": la pantalla nueva entra desde la derecha y la
+/// anterior se aparta un poco hacia la izquierda mientras se desvanece.
+Widget _pageTransition(
+  Widget child,
+  Animation<double> animation, {
+  required bool isIncoming,
+  required bool instant,
+}) {
+  if (instant) {
+    return child;
+  }
+  final curved = CurvedAnimation(
+    parent: animation,
+    curve: Curves.easeOutCubic,
+    reverseCurve: Curves.easeInCubic,
+  );
+  final offset = Tween<Offset>(
+    begin: isIncoming ? const Offset(1, 0) : const Offset(-0.3, 0),
+    end: Offset.zero,
+  ).animate(curved);
+
+  return SlideTransition(
+    position: offset,
+    child: isIncoming ? child : FadeTransition(opacity: curved, child: child),
+  );
+}
 
 class LogisticaApp extends StatefulWidget {
   LogisticaApp({
     super.key,
     required this.authService,
     OnboardingStorage? onboardingStorage,
-    PaletteStorage? paletteStorage,
+    BrandStorage? brandStorage,
   }) : onboardingStorage = onboardingStorage ?? OnboardingStorage(),
-       paletteStorage = paletteStorage ?? PaletteStorage();
+       brandStorage = brandStorage ?? BrandStorage();
 
   final AuthService authService;
   final OnboardingStorage onboardingStorage;
-  final PaletteStorage paletteStorage;
+  final BrandStorage brandStorage;
 
   @override
   State<LogisticaApp> createState() => _LogisticaAppState();
 }
 
 class _LogisticaAppState extends State<LogisticaApp> {
+  late final _routesService = RoutesService(widget.authService.apiClient);
   bool _isRestoring = true;
-  AppPalette _palette = AppPalette.coral;
+
+  /// Pantalla mostrada en el último cambio y si ese cambio es inmediato.
+  _Screen? _shownScreen;
+  bool _instant = false;
+  bool _invertBrand = false;
   bool _showWelcome = false;
   AuthSession? _session;
   String? _loginMessage;
@@ -42,27 +78,30 @@ class _LogisticaAppState extends State<LogisticaApp> {
   Future<void> _restoreSession() async {
     final session = await widget.authService.restoreSession();
     final seenWelcome = await widget.onboardingStorage.hasSeenWelcome();
-    final palette = await widget.paletteStorage.read();
+    final inverted = await widget.brandStorage.readInverted();
     setState(() {
       _session = session;
-      _palette = palette;
-      _showWelcome = !seenWelcome;
+      _invertBrand = inverted;
+      _showWelcome = AppConfig.alwaysShowWelcome || !seenWelcome;
       _isRestoring = false;
     });
   }
 
-  Future<void> _changePalette(AppPalette palette) async {
+  Future<void> _toggleInvert() async {
+    final inverted = !_invertBrand;
     setState(() {
-      _palette = palette;
+      _invertBrand = inverted;
     });
-    await widget.paletteStorage.save(palette);
+    await widget.brandStorage.saveInverted(inverted);
   }
 
   Future<void> _finishWelcome() async {
-    await widget.onboardingStorage.markWelcomeSeen();
+    // Primero se cambia de pantalla, para que la animación empiece al
+    // instante; guardar en el teléfono puede tardar un momento.
     setState(() {
       _showWelcome = false;
     });
+    await widget.onboardingStorage.markWelcomeSeen();
   }
 
   Future<void> _logout() async {
@@ -81,17 +120,47 @@ class _LogisticaAppState extends State<LogisticaApp> {
   }
 
   Widget _buildHome() {
-    final session = _session;
     if (_isRestoring) {
       return const Scaffold(body: Center(child: CircularProgressIndicator()));
     }
-    if (session == null && _showWelcome) {
+    final screen = _currentScreen();
+    if (screen != _shownScreen) {
+      // De la bienvenida al login el cambio es inmediato: el login arranca
+      // con el mismo aspecto y él mismo estira el bloque de color. En los
+      // demás cambios la nueva pantalla entra deslizándose.
+      _instant = _shownScreen == _Screen.welcome && screen == _Screen.login;
+      _shownScreen = screen;
+    }
+    return AnimatedSwitcher(
+      duration: const Duration(milliseconds: 450),
+      transitionBuilder: (child, animation) => _pageTransition(
+        child,
+        animation,
+        isIncoming: child.key == ValueKey(screen),
+        instant: _instant,
+      ),
+      child: KeyedSubtree(key: ValueKey(screen), child: _buildScreen(screen)),
+    );
+  }
+
+  _Screen _currentScreen() {
+    if (_showWelcome) {
+      return _Screen.welcome;
+    }
+    return _session != null ? _Screen.route : _Screen.login;
+  }
+
+  Widget _buildScreen(_Screen screen) {
+    final session = _session;
+    if (screen == _Screen.welcome) {
       return WelcomePage(onContinue: _finishWelcome);
     }
     if (session == null) {
       return LoginPage(
         authService: widget.authService,
         initialMessage: _loginMessage,
+        // Viniendo de la bienvenida, el login continúa su animación.
+        revealFromWelcome: _instant,
         onLoggedIn: (newSession) {
           setState(() {
             _session = newSession;
@@ -100,7 +169,11 @@ class _LogisticaAppState extends State<LogisticaApp> {
         },
       );
     }
-    return MyRoutePage(user: session.user, onLogout: _logout);
+    return MyRoutePage(
+      user: session.user,
+      routesService: _routesService,
+      onLogout: _logout,
+    );
   }
 
   @override
@@ -108,14 +181,29 @@ class _LogisticaAppState extends State<LogisticaApp> {
     return MaterialApp(
       title: 'Speedrun',
       debugShowCheckedModeBanner: false,
-      theme: buildAppTheme(primary: _palette.color),
+      theme: buildAppTheme(invertBrand: _invertBrand),
       home: _buildHome(),
       builder: (context, child) {
-        // El selector de colores flota sobre todas las pantallas.
+        // En la bienvenida y el inicio de sesión, el botón para invertir
+        // los colores flota en la esquina superior derecha.
+        if (_isRestoring || _currentScreen() == _Screen.route) {
+          return child!;
+        }
         return Stack(
           children: [
             child!,
-            _PaletteSwitcher(palette: _palette, onChanged: _changePalette),
+            SafeArea(
+              child: Align(
+                alignment: Alignment.topRight,
+                child: Padding(
+                  padding: const EdgeInsets.only(top: 10, right: 12),
+                  child: _InvertSwitch(
+                    inverted: _invertBrand,
+                    onPressed: _toggleInvert,
+                  ),
+                ),
+              ),
+            ),
           ],
         );
       },
@@ -123,59 +211,39 @@ class _LogisticaAppState extends State<LogisticaApp> {
   }
 }
 
-/// Botón para elegir la paleta de colores de la app. Cada toque pasa a la
-/// siguiente, y la elección se guarda en el teléfono.
-class _PaletteSwitcher extends StatelessWidget {
-  const _PaletteSwitcher({required this.palette, required this.onChanged});
+/// Botón para invertir los colores de la bienvenida y del inicio de sesión:
+/// intercambia el blanco y el negro.
+class _InvertSwitch extends StatelessWidget {
+  const _InvertSwitch({required this.inverted, required this.onPressed});
 
-  final AppPalette palette;
-  final ValueChanged<AppPalette> onChanged;
+  final bool inverted;
+  final VoidCallback onPressed;
 
   @override
   Widget build(BuildContext context) {
-    final next =
-        AppPalette.values[(palette.index + 1) % AppPalette.values.length];
-
-    return SafeArea(
-      child: Align(
-        // Arriba al centro: no tapa la marca ni el botón de cerrar sesión.
-        alignment: Alignment.topCenter,
+    return Material(
+      color: Colors.white,
+      elevation: 3,
+      shape: const RoundedRectangleBorder(borderRadius: AppRadius.button),
+      child: InkWell(
+        customBorder: const RoundedRectangleBorder(
+          borderRadius: AppRadius.button,
+        ),
+        onTap: onPressed,
         child: Padding(
-          padding: const EdgeInsets.only(top: 10),
-          child: Material(
-            color: Colors.white,
-            elevation: 3,
-            shape: const StadiumBorder(),
-            child: InkWell(
-              customBorder: const StadiumBorder(),
-              onTap: () => onChanged(next),
-              child: Padding(
-                padding: const EdgeInsets.symmetric(
-                  horizontal: 12,
-                  vertical: 8,
-                ),
-                child: Row(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    Container(
-                      width: 14,
-                      height: 14,
-                      decoration: BoxDecoration(
-                        color: palette.color,
-                        shape: BoxShape.circle,
-                      ),
-                    ),
-                    const SizedBox(width: 8),
-                    Text(
-                      palette.label,
-                      style: Theme.of(context).textTheme.labelSmall?.copyWith(
-                        fontWeight: FontWeight.w600,
-                      ),
-                    ),
-                  ],
-                ),
+          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              const Icon(Icons.invert_colors, size: 14, color: AppColors.ink),
+              const SizedBox(width: 6),
+              Text(
+                inverted ? 'Normal' : 'Invertir',
+                style: Theme.of(
+                  context,
+                ).textTheme.labelSmall?.copyWith(fontWeight: FontWeight.w600),
               ),
-            ),
+            ],
           ),
         ),
       ),
