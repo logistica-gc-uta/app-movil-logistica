@@ -53,6 +53,7 @@ void main() {
   Future<void> fillAndSubmit(WidgetTester tester) async {
     await tester.enterText(find.byType(TextFormField).first, 'a@test.com');
     await tester.enterText(find.byType(TextFormField).last, 'secreto');
+    await tester.ensureVisible(find.text('Ingresar al turno'));
     await tester.tap(find.text('Ingresar al turno'));
     await tester.pumpAndSettle();
   }
@@ -68,6 +69,7 @@ void main() {
   ) async {
     await openLogin(tester, loginOk('DRIVER'));
 
+    await tester.ensureVisible(find.text('Ingresar al turno'));
     await tester.tap(find.text('Ingresar al turno'));
     await tester.pumpAndSettle();
 

@@ -30,6 +30,13 @@ class ApiClient {
     return _decode(response);
   }
 
+  Future<dynamic> patch(String path, Map<String, dynamic> body) async {
+    final response = await _httpClient
+        .patch(_uri(path), headers: _headers(), body: jsonEncode(body))
+        .timeout(timeout);
+    return _decode(response);
+  }
+
   Uri _uri(String path) => Uri.parse('${AppConfig.apiBaseUrl}$path');
 
   Map<String, String> _headers() {
@@ -42,7 +49,7 @@ class ApiClient {
 
   dynamic _decode(http.Response response) {
     if (response.statusCode >= 200 && response.statusCode < 300) {
-      return jsonDecode(response.body);
+      return response.body.isEmpty ? null : jsonDecode(response.body);
     }
     if (response.statusCode == 401 && token != null) {
       onUnauthorized?.call();
