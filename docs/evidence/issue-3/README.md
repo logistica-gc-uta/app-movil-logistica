@@ -14,19 +14,25 @@ Los cambios visuales de bienvenida/login, tipografía Inter y preferencia de inv
 
 ## Validación automatizada
 
-`flutter pub get`, `flutter analyze` y `flutter test`.
+`flutter pub get`: correcto. `flutter analyze`: sin problemas. `flutter test`: **60 pruebas aprobadas**.
 
 Las pruebas de unidad/widgets cubren orden, fechas UTC-5, estados vacíos/error, Bearer, transiciones, 401/403/409/500, timeout sin reenvío automático, bloqueo de botones, fallo del GET posterior y resultados históricos después de reprogramación.
 
 ## Integración Android
 
-Resultado: pendiente de ejecución final.
+Resultado: **PASS**, salida 0 de `flutter drive`. Escenario de integración completo aprobado en el emulador `Medium_Phone_API_36.1`, Android API 36, x86_64. El intento en teléfono físico no llegó a ejecutar el test por pérdida de la conexión USB; no se declara validado en ese dispositivo.
+
+![Mi Ruta del Día: tres entregas y una visita fallida](android-daily-route.png)
+
+Compilación debug de integración: `build/app/outputs/flutter-apk/app-debug.apk`, Flutter 3.41.3 / Dart 3.11.1, JDK 17. SHA-256: `65e4b718e1c1c6ab595c1963ab7775617663ecfd52277d17eb689a3bb156d764`. Es el APK de pruebas, no un artefacto de distribución de #6.
 
 La integración usa cuentas `@fixture.invalid`, direcciones Calle DEMO y una base exclusiva `mobile_issue3_<sufijo>`. Copia solo el esquema de PostgreSQL; nunca copia datos del usuario. El puerto 3003 aloja el backend de prueba. La prueba rechaza cualquier otra URL para evitar mutaciones accidentales.
 
 Verifica con REST real: dos conductores ven rutas distintas; ADMIN y CLIENT reciben 403; sin JWT recibe 401; un conductor ajeno no puede modificar el pedido; los botones de Flutter actualizan tres entregas y consultan sus resultados persistidos; una visita fallida se muestra sin DELIVERED/CANCELLED falsos.
 
 Backend local validado: `13a557e3871895d93a43f40ab81f7a8e55dec012`.
+
+Respuesta persistida final: ruta IN_PROGRESS; estados de pedidos `DELIVERED, DELIVERED, DELIVERED, ASSIGNED`; resultados de visita `SUCCESSFUL, SUCCESSFUL, SUCCESSFUL, FAILED`. La ruta no se completa desde esta prueba: el flujo de cierre/retorno se desarrolla en #8. El inicio y el registro de fallo se invocan como preparación del escenario, sin implementar todavía esos botones en el producto.
 
 ## Reproducción en PowerShell
 
