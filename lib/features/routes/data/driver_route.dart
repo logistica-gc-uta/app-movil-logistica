@@ -106,6 +106,20 @@ class DriverRoute {
   /// Solo con la ruta iniciada el backend acepta "En camino" y "Entregado".
   bool get isInProgress => status == 'IN_PROGRESS';
 
+  /// Parada que el chofer atiende ahora; las demás esperan su turno. Es la
+  /// que ya va en camino o, si no hay, la primera por entregar según el
+  /// orden. Un intento fallido también cuenta como parada terminada.
+  DeliveryStop? get currentStop {
+    final open = stops.where((stop) => !stop.isDelivered && !stop.isFailed);
+    return open.where((stop) => stop.status == 'IN_TRANSIT').firstOrNull ??
+        open.where((stop) => stop.status == 'ASSIGNED').firstOrNull;
+  }
+
+  /// Todas las paradas tienen resultado: entregadas o con intento fallido.
+  bool get allStopsResolved =>
+      stops.isNotEmpty &&
+      stops.every((stop) => stop.isDelivered || stop.isFailed);
+
   int get deliveredCount => stops.where((stop) => stop.isDelivered).length;
 
   int get failedCount => stops.where((stop) => stop.isFailed).length;

@@ -143,4 +143,44 @@ void main() {
     );
     expect(route.deliveredCount, 1);
   });
+
+  test('la parada en turno es la primera pendiente según el orden', () {
+    final route = DriverRoute.fromJson(
+      routeJson(
+        orders: [
+          order('o3', 3, 'ASSIGNED'),
+          order('o1', 1, 'DELIVERED'),
+          order('o2', 2, 'ASSIGNED'),
+        ],
+        stops: [
+          {'orderId': 'o1', 'outcome': 'SUCCESSFUL'},
+          {'orderId': 'o2', 'outcome': 'PENDING'},
+          {'orderId': 'o3', 'outcome': 'PENDING'},
+        ],
+      ),
+    );
+    expect(route.currentStop?.orderId, 'o2');
+  });
+
+  test('una parada ya en camino conserva el turno', () {
+    final route = DriverRoute.fromJson(
+      routeJson(
+        orders: [order('o1', 1, 'ASSIGNED'), order('o2', 2, 'IN_TRANSIT')],
+      ),
+    );
+    expect(route.currentStop?.orderId, 'o2');
+  });
+
+  test('sin paradas pendientes no hay turno', () {
+    final route = DriverRoute.fromJson(
+      routeJson(
+        orders: [order('o1', 1, 'DELIVERED'), order('o2', 2, 'ASSIGNED')],
+        stops: [
+          {'orderId': 'o1', 'outcome': 'SUCCESSFUL'},
+          {'orderId': 'o2', 'outcome': 'FAILED'},
+        ],
+      ),
+    );
+    expect(route.currentStop, isNull);
+  });
 }

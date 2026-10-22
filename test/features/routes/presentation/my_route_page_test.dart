@@ -54,6 +54,19 @@ String routesJson({
   ]);
 }
 
+/// Entra a las paradas de una ruta ya iniciada desde su tarjeta.
+Future<void> enterRoute(WidgetTester tester) async {
+  await tester.tap(find.byKey(const ValueKey('open-route-r1')));
+  await tester.pumpAndSettle();
+}
+
+/// Las acciones de cada parada pueden quedar debajo del borde de la pantalla.
+Future<void> tapVisible(WidgetTester tester, Finder finder) async {
+  await tester.ensureVisible(finder);
+  await tester.pump();
+  await tester.tap(finder);
+}
+
 void main() {
   late List<http.Request> requests;
 
@@ -63,6 +76,10 @@ void main() {
     AuthUser user = driver,
   }) async {
     requests = [];
+    // Pantalla de teléfono (411 × 914), no la superficie de 800 × 600.
+    tester.view.physicalSize = const Size(1080, 2400);
+    tester.view.devicePixelRatio = 2.625;
+    addTearDown(tester.view.reset);
     final client = MockClient((request) {
       requests.add(request);
       return server(request);
@@ -160,13 +177,15 @@ void main() {
       expect(find.text('En curso'), findsOneWidget);
       expect(find.text('Inicio: 09:30 (Ecuador)'), findsOneWidget);
       expect(find.text('Iniciar ruta'), findsNothing);
-      expect(find.text('En camino'), findsNWidgets(2));
+      // Solo la parada 1 está en turno; la 2 espera.
+      expect(find.text('En camino'), findsOneWidget);
+      expect(find.text('Disponible al terminar la parada 1'), findsOneWidget);
       expect(
         tester.getTopLeft(find.text('Calle Primera 100')).dy,
         lessThan(tester.getTopLeft(find.text('Av. Segunda 200')).dy),
       );
       expect(
-        find.text('Ruta en curso. El orden de las paradas está bloqueado.'),
+        find.text('Ruta en curso. Atiende las paradas en orden, una a la vez.'),
         findsOneWidget,
       );
     },
@@ -274,7 +293,7 @@ void main() {
     await tester.tap(find.text('Iniciar ruta'));
     await tester.pumpAndSettle();
     expect(find.text('Iniciar ruta'), findsNothing);
-    expect(find.text('Calle Primera 100'), findsOneWidget);
+    expect(find.text('Centro'), findsOneWidget);
     expect(
       find.text(
         'Actualiza la lista antes de volver a intentar iniciar una ruta.',
@@ -363,6 +382,7 @@ void main() {
         {'orderId': 'o2', 'outcome': 'FAILED'},
       ];
       await openPage(tester, (_) async => http.Response(jsonEncode(data), 200));
+      await enterRoute(tester);
       expect(find.textContaining('Sigues ocupado'), findsOneWidget);
       expect(
         find.text('1 de 2 entregados · 1 con intento fallido'),
@@ -422,6 +442,8 @@ void main() {
         200,
       ),
     );
+    await tester.tap(find.byKey(const ValueKey('flip-route-r1')));
+    await tester.pumpAndSettle();
 
     final first = tester.getTopLeft(find.text('Calle Primera 100'));
     final second = tester.getTopLeft(find.text('Av. Segunda 200'));
@@ -458,8 +480,9 @@ void main() {
         200,
       );
     });
+    await enterRoute(tester);
 
-    await tester.tap(find.text('En camino').first);
+    await tapVisible(tester, find.text('En camino').first);
     await tester.pumpAndSettle();
 
     final patch = requests.singleWhere((request) => request.method == 'PATCH');
@@ -481,8 +504,9 @@ void main() {
         200,
       );
     });
+    await enterRoute(tester);
 
-    await tester.tap(find.text('En camino').first);
+    await tapVisible(tester, find.text('En camino').first);
     await tester.pumpAndSettle();
 
     expect(find.text('Pedido actualizado.'), findsNothing);
@@ -506,7 +530,8 @@ void main() {
         200,
       );
     });
-    await tester.tap(find.text('Entregado'));
+    await enterRoute(tester);
+    await tapVisible(tester, find.text('Entregado'));
     await tester.pumpAndSettle();
     expect(
       requests.singleWhere((r) => r.method == 'PATCH').body,
@@ -531,7 +556,8 @@ void main() {
         200,
       );
     });
-    await tester.tap(find.text('En camino').first);
+    await enterRoute(tester);
+    await tapVisible(tester, find.text('En camino').first);
     await tester.pumpAndSettle();
     expect(find.text('Calle Primera 100'), findsOneWidget);
     expect(find.text('Pedido actualizado.'), findsNothing);
@@ -554,6 +580,7 @@ void main() {
       {'orderId': 'o1', 'outcome': 'FAILED'},
     ];
     await openPage(tester, (_) async => http.Response(jsonEncode(data), 200));
+    await enterRoute(tester);
     expect(
       find.text('0 de 2 entregados · 1 con intento fallido'),
       findsOneWidget,
@@ -573,7 +600,8 @@ void main() {
         200,
       );
     });
-    await tester.tap(find.text('En camino').first);
+    await enterRoute(tester);
+    await tapVisible(tester, find.text('En camino').first);
     await tester.pump();
     expect(
       tester
@@ -589,5 +617,193 @@ void main() {
       find.text('El pedido cambió de estado. Actualiza la lista.'),
       findsOneWidget,
     );
+  });
+
+  testWidgets('solo la parada en turno ofrece acciones', (tester) async {
+    await openPage(
+      tester,
+      (_) async => http.Response(
+        routesJson(routeStatus: 'IN_PROGRESS', orderStatus: 'ASSIGNED'),
+        200,
+      ),
+    );
+    await enterRoute(tester);
+    final first = find.ancestor(
+      of: find.text('Calle Primera 100'),
+      matching: find.byType(Column),
+    );
+    final second = find.ancestor(
+      of: find.text('Av. Segunda 200'),
+      matching: find.byType(Column),
+    );
+    expect(
+      find.descendant(of: first.first, matching: find.text('En camino')),
+      findsOneWidget,
+    );
+    expect(
+      find.descendant(of: second.first, matching: find.text('En camino')),
+      findsNothing,
+    );
+  });
+
+  testWidgets('un intento fallido da el turno a la parada siguiente', (
+    tester,
+  ) async {
+    final data =
+        jsonDecode(
+              routesJson(routeStatus: 'IN_PROGRESS', orderStatus: 'ASSIGNED'),
+            )
+            as List;
+    data.first['stops'] = [
+      {'orderId': 'o1', 'outcome': 'FAILED'},
+      {'orderId': 'o2', 'outcome': 'PENDING'},
+    ];
+    await openPage(tester, (_) async => http.Response(jsonEncode(data), 200));
+    await enterRoute(tester);
+    final second = find.ancestor(
+      of: find.text('Av. Segunda 200'),
+      matching: find.byType(Column),
+    );
+    expect(
+      find.descendant(of: second.first, matching: find.text('En camino')),
+      findsOneWidget,
+    );
+    expect(find.textContaining('Disponible al terminar'), findsNothing);
+  });
+
+  testWidgets('la tarjeta gira y muestra las paradas resumidas', (
+    tester,
+  ) async {
+    await openPage(
+      tester,
+      (_) async => http.Response(
+        routesJson(routeStatus: 'ASSIGNED', orderStatus: 'ASSIGNED'),
+        200,
+      ),
+    );
+    final flip = find.byKey(const ValueKey('flip-route-r1'));
+    expect(find.text('Calle Primera 100'), findsNothing);
+    await tester.tap(flip);
+    await tester.pumpAndSettle();
+    expect(find.text('Calle Primera 100'), findsOneWidget);
+    expect(find.text('Av. Segunda 200'), findsOneWidget);
+    expect(find.text('Iniciar ruta'), findsOneWidget);
+    await tester.tap(flip);
+    await tester.pumpAndSettle();
+    expect(find.text('Calle Primera 100'), findsNothing);
+    expect(find.text('0 de 2 entregados'), findsOneWidget);
+  });
+
+  testWidgets('Regresar vuelve a las rutas del día', (tester) async {
+    await openPage(
+      tester,
+      (_) async => http.Response(
+        routesJson(routeStatus: 'IN_PROGRESS', orderStatus: 'ASSIGNED'),
+        200,
+      ),
+    );
+    expect(find.text('Calle Primera 100'), findsNothing);
+    await enterRoute(tester);
+    expect(find.text('Hola, Carlos Chofer'), findsNothing);
+    expect(find.text('Calle Primera 100'), findsOneWidget);
+    await tester.tap(find.text('Regresar'));
+    await tester.pumpAndSettle();
+    expect(find.text('Hola, Carlos Chofer'), findsOneWidget);
+    expect(find.text('Continuar ruta'), findsOneWidget);
+    expect(find.text('Calle Primera 100'), findsNothing);
+  });
+
+  testWidgets('el botón atrás del teléfono regresa sin salir de la app', (
+    tester,
+  ) async {
+    await openPage(
+      tester,
+      (_) async => http.Response(
+        routesJson(routeStatus: 'IN_PROGRESS', orderStatus: 'ASSIGNED'),
+        200,
+      ),
+    );
+    await enterRoute(tester);
+    await tester.state<NavigatorState>(find.byType(Navigator)).maybePop();
+    await tester.pumpAndSettle();
+    expect(find.text('Hola, Carlos Chofer'), findsOneWidget);
+    expect(find.byType(MyRoutePage), findsOneWidget);
+  });
+
+  /// Ruta en curso: o1 con [first] y o2 en camino hasta que se entrega.
+  Future<void> openLastStop(
+    WidgetTester tester, {
+    required String firstOutcome,
+  }) async {
+    var delivered = false;
+    await openPage(tester, (request) async {
+      if (request.method == 'PATCH') {
+        delivered = true;
+        return http.Response('{}', 200);
+      }
+      final data =
+          jsonDecode(
+                routesJson(routeStatus: 'IN_PROGRESS', orderStatus: 'ASSIGNED'),
+              )
+              as List;
+      final orders = data.first['orders'] as List;
+      orders[0]['status'] = delivered ? 'DELIVERED' : 'IN_TRANSIT';
+      orders[1]['status'] = firstOutcome == 'SUCCESSFUL'
+          ? 'DELIVERED'
+          : 'ASSIGNED';
+      data.first['stops'] = [
+        {'orderId': 'o1', 'outcome': firstOutcome},
+        {'orderId': 'o2', 'outcome': delivered ? 'SUCCESSFUL' : 'PENDING'},
+      ];
+      return http.Response(jsonEncode(data), 200);
+    });
+    expect(find.text('¡Ruta completada!'), findsNothing);
+    await enterRoute(tester);
+    await tapVisible(tester, find.text('Entregado'));
+  }
+
+  testWidgets('al entregar, el camión llega antes de mostrar el resultado', (
+    tester,
+  ) async {
+    await openLastStop(tester, firstOutcome: 'SUCCESSFUL');
+    for (var i = 0; i < 5; i++) {
+      await tester.pump(const Duration(milliseconds: 50));
+    }
+    expect(find.text('Llegando al destino'), findsOneWidget);
+    expect(find.text('Entregado con éxito'), findsOneWidget);
+    await tester.pumpAndSettle();
+    expect(find.text('Llegando al destino'), findsNothing);
+    expect(find.text('Entregado con éxito'), findsNWidgets(2));
+  });
+
+  testWidgets('la última entrega confirma la ruta y la marca en su tarjeta', (
+    tester,
+  ) async {
+    await openLastStop(tester, firstOutcome: 'SUCCESSFUL');
+    await tester.pumpAndSettle();
+    expect(find.text('¡Ruta completada!'), findsOneWidget);
+    expect(find.text('Entregaste 2 de 2 paradas con éxito.'), findsOneWidget);
+    await tester.tap(find.text('Volver a mis rutas'));
+    await tester.pumpAndSettle();
+    expect(find.text('Hola, Carlos Chofer'), findsOneWidget);
+    expect(find.text('PARADAS COMPLETADAS'), findsOneWidget);
+    expect(find.text('Ver resumen'), findsOneWidget);
+    // El servidor aún no cerró la ruta: el estado no se inventa.
+    expect(find.text('En curso'), findsOneWidget);
+  });
+
+  testWidgets('con un intento fallido no anuncia éxito total', (tester) async {
+    await openLastStop(tester, firstOutcome: 'FAILED');
+    await tester.pumpAndSettle();
+    expect(find.text('¡Ruta completada!'), findsNothing);
+    expect(find.text('Paradas finalizadas'), findsOneWidget);
+    expect(
+      find.text('1 entrega exitosa · 1 con intento fallido.'),
+      findsOneWidget,
+    );
+    await tester.tap(find.text('Seguir viendo las paradas'));
+    await tester.pumpAndSettle();
+    expect(find.text('Intento fallido'), findsOneWidget);
+    expect(find.text('Hola, Carlos Chofer'), findsNothing);
   });
 }
