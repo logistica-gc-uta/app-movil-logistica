@@ -40,6 +40,8 @@ class DriverRoute {
     required this.zoneName,
     required this.zoneCode,
     required this.stops,
+    this.startedAt,
+    this.returnedAt,
   });
 
   factory DriverRoute.fromJson(Map<String, dynamic> json) {
@@ -74,6 +76,8 @@ class DriverRoute {
       zoneName: zone['name'] as String,
       zoneCode: zone['code'] as String,
       stops: stops,
+      startedAt: DateTime.tryParse(json['startedAt'] as String? ?? ''),
+      returnedAt: DateTime.tryParse(json['returnedAt'] as String? ?? ''),
     );
   }
 
@@ -84,6 +88,20 @@ class DriverRoute {
   final String zoneName;
   final String zoneCode;
   final List<DeliveryStop> stops;
+  final DateTime? startedAt;
+  final DateTime? returnedAt;
+
+  /// Aplica únicamente la confirmación del endpoint de inicio, sin alterar
+  /// composición, orden ni resultados de las paradas ya consultadas.
+  DriverRoute withConfirmedStart(DateTime time) => DriverRoute(
+    id: id,
+    status: 'IN_PROGRESS',
+    zoneName: zoneName,
+    zoneCode: zoneCode,
+    stops: stops,
+    startedAt: time,
+    returnedAt: returnedAt,
+  );
 
   /// Solo con la ruta iniciada el backend acepta "En camino" y "Entregado".
   bool get isInProgress => status == 'IN_PROGRESS';

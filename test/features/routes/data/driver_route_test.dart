@@ -28,6 +28,30 @@ Map<String, dynamic> routeJson({
 }
 
 void main() {
+  test(
+    'lee fechas de inicio y regreso y conserva el orden al confirmar inicio',
+    () {
+      final json = routeJson(
+        orders: [order('o2', 2, 'ASSIGNED'), order('o1', 1, 'ASSIGNED')],
+      );
+      json['returnedAt'] = '2026-10-18T18:30:00Z';
+      final route = DriverRoute.fromJson(json);
+      expect(route.startedAt, DateTime.utc(2026, 10, 18, 13));
+      expect(route.returnedAt, DateTime.utc(2026, 10, 18, 18, 30));
+      final started = route.withConfirmedStart(DateTime.utc(2026, 10, 18, 14));
+      expect(started.isInProgress, isTrue);
+      expect(started.stops.map((s) => s.orderId), ['o1', 'o2']);
+      expect(started.startedAt, DateTime.utc(2026, 10, 18, 14));
+      expect(started.zoneName, route.zoneName);
+    },
+  );
+
+  test('fechas ausentes de rutas antiguas quedan sin confirmar', () {
+    final json = routeJson(orders: [])..remove('startedAt');
+    final route = DriverRoute.fromJson(json);
+    expect(route.startedAt, isNull);
+    expect(route.returnedAt, isNull);
+  });
   test('lee la zona, el estado y las paradas de la respuesta', () {
     final route = DriverRoute.fromJson(
       routeJson(orders: [order('o1', 1, 'ASSIGNED')]),

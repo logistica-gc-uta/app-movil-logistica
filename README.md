@@ -2,7 +2,7 @@
 
 App móvil en Flutter (Android) para el chofer del sistema de logística y entrega de pedidos. Consume la API del [backend](https://github.com/logistica-gc-uta/backend).
 
-**Estado actual:** inicio de sesión del chofer y pantalla «Mi Ruta del Día» implementados. El botón «Iniciar ruta» (issue #4) y el registro de entregas fallidas (issue #8) todavía no.
+**Estado actual:** inicio de sesión del chofer, pantalla «Mi Ruta del Día» e «Iniciar ruta» implementados. El formulario de entregas fallidas y la confirmación de regreso al depósito (issue #8) siguen pendientes.
 
 ## Requisitos
 
@@ -104,7 +104,9 @@ Tras iniciar sesión, la app consulta `GET /drivers/me/routes?date=YYYY-MM-DD` c
 - **Contenido:** cada ruta muestra su zona, su estado y sus paradas ordenadas por `stopOrder`, con la dirección y el estado del pedido. El progreso usa el resultado persistido de la visita; una entrega posterior en otra ruta no convierte una visita fallida en exitosa. Solo las rutas antiguas sin visitas persistidas usan el estado comercial como respaldo.
 - **Estados de pantalla:** cargando, error con botón «Reintentar» y «No tienes rutas para hoy». Se puede deslizar hacia abajo para actualizar. Si falla una recarga, se conserva la ruta consultada y se muestra el error. Si el servidor confirmó una mutación pero falla el GET posterior, se avisa que la lista no está actualizada.
 - **Acciones:** con la ruta en curso (`IN_PROGRESS`), cada pedido ofrece «En camino» (`ASSIGNED` → `IN_TRANSIT`) y luego «Entregado» (`IN_TRANSIT` → `DELIVERED`) mediante `PATCH /orders/:id/status`. La lista se refresca después de que el servidor confirma el cambio; si el servidor lo rechaza, se muestra el motivo y no un éxito.
-- **Ruta sin iniciar:** el backend solo acepta esas acciones con la ruta iniciada, así que con la ruta `ASSIGNED` la app muestra un aviso en lugar de los botones. El inicio de ruta es la issue #4.
+- **Iniciar ruta:** solo el chofer autenticado ve «Iniciar ruta» en sus rutas `ASSIGNED`. Envía `POST /routes/:id/start` con `{}`; el backend verifica rol, propiedad, reservas y estado. El botón muestra espera y bloquea otras acciones hasta recibir respuesta. Solo entonces se refleja `IN_PROGRESS` y la hora de inicio en Ecuador. La repetición autorizada conserva la hora original en el servidor.
+- **Recuperación del inicio:** si se pierde la respuesta, se consulta GET sin reenviar automáticamente el POST. Si tampoco se puede consultar, es necesario actualizar la lista antes de otro intento. Un GET anterior que responda tarde no revierte un inicio confirmado. Los errores 403 y 409 se muestran como rechazos, sin anunciar éxito; un 401 con sesión activa vuelve al login.
+- **Paradas y finalización:** con la ruta en curso se conserva el orden y se informa su bloqueo; la app no ofrece edición ni reordenamiento. `COMPLETED` indica visitas finalizadas y muestra que el chofer sigue ocupado/retornando hasta que exista confirmación persistida de regreso. Nunca se deduce `AVAILABLE` del estado de la ruta.
 
 Para probarla hace falta una ruta asignada al chofer de prueba para el día de hoy (desde el panel web de administración o con los datos de demostración del backend).
 
@@ -162,6 +164,8 @@ flutter test
 Las reglas de análisis están en `analysis_options.yaml`. Las pruebas usan un servidor y un almacenamiento simulados, así que no necesitan backend ni dispositivo.
 
 La prueba adicional `integration_test/daily_route_test.dart` usa Android, NestJS y PostgreSQL reales con una base aislada y datos ficticios. Ver [evidencia y reproducción de la issue #3](docs/evidence/issue-3/README.md).
+
+El inicio explícito, la repetición idempotente y la ruta completada con retorno pendiente se validan con `integration_test/start_route_test.dart`. Ver [evidencia y reproducción de la issue #4](docs/evidence/issue-4/README.md).
 
 ## Flujo de trabajo
 

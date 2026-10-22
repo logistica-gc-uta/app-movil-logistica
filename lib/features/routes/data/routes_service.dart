@@ -3,9 +3,10 @@ import 'package:app_movil_logistica/core/network/api_exception.dart';
 import 'package:app_movil_logistica/features/routes/data/driver_route.dart';
 
 class RoutesException implements Exception {
-  const RoutesException(this.message);
+  const RoutesException(this.message, {this.statusCode});
 
   final String message;
+  final int? statusCode;
 }
 
 /// Fecha de hoy en Ecuador (UTC-5, sin horario de verano) con formato
@@ -39,6 +40,25 @@ class RoutesService {
   Future<void> markInTransit(String orderId) =>
       _updateStatus(orderId, 'IN_TRANSIT');
 
+  /// El inicio es idempotente en el servidor. Nunca reenvía automáticamente
+  /// la mutación tras un timeout; la pantalla consulta GET para recuperar estado.
+  Future<DateTime> startRoute(String routeId) async {
+    final data = await _call(
+      () => apiClient.post('/routes/${Uri.encodeComponent(routeId)}/start', {}),
+      startingRoute: true,
+    );
+    if (data is Map<String, dynamic> &&
+        data['id'] == routeId &&
+        data['status'] == 'IN_PROGRESS' &&
+        data['startedAt'] is String) {
+      final time = DateTime.tryParse(data['startedAt'] as String);
+      if (time != null && time.isUtc) return time;
+    }
+    throw const RoutesException(
+      'El servidor no confirmó el inicio de la ruta. Actualiza la lista.',
+    );
+  }
+
   Future<void> markDelivered(String orderId) =>
       _updateStatus(orderId, 'DELIVERED');
 
@@ -48,18 +68,26 @@ class RoutesService {
     );
   }
 
-  Future<dynamic> _call(Future<dynamic> Function() request) async {
+  Future<dynamic> _call(
+    Future<dynamic> Function() request, {
+    bool startingRoute = false,
+  }) async {
     try {
       return await request();
     } on ApiException catch (error) {
       throw RoutesException(switch (error.statusCode) {
         401 => 'Tu sesión caducó. Inicia sesión de nuevo.',
+        403 when startingRoute => 'No tienes permiso para iniciar esta ruta.',
         403 =>
           'No puedes hacer esta acción ahora. '
               'Verifica que la ruta esté iniciada.',
+        409 when startingRoute =>
+          'La ruta no se puede iniciar en su estado actual. Actualiza la lista.',
+        404 when startingRoute =>
+          'La ruta ya no está disponible. Actualiza la lista.',
         409 => 'El pedido cambió de estado. Actualiza la lista.',
         _ => 'El servidor respondió con un error.',
-      });
+      }, statusCode: error.statusCode);
     } on Exception {
       throw const RoutesException('No se pudo conectar con el servidor.');
     }

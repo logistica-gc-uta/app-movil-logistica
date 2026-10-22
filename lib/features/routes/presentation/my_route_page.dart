@@ -30,6 +30,11 @@ class _MyRoutePageState extends State<MyRoutePage> {
 
   /// Pedido que se está actualizando, para mostrar su botón en espera.
   String? _updatingOrderId;
+  String? _startingRouteId;
+  bool _startNeedsRefresh = false;
+  int _loadSequence = 0;
+
+  bool get _isMutating => _updatingOrderId != null || _startingRouteId != null;
 
   @override
   void initState() {
@@ -38,19 +43,21 @@ class _MyRoutePageState extends State<MyRoutePage> {
   }
 
   Future<bool> _load() async {
+    final sequence = ++_loadSequence;
     try {
       final routes = await widget.routesService.fetchMyRoutes(_date);
-      if (!mounted) {
+      if (!mounted || sequence != _loadSequence) {
         return false;
       }
       setState(() {
         _routes = routes;
         _errorMessage = null;
         _isLoading = false;
+        _startNeedsRefresh = false;
       });
       return true;
     } on RoutesException catch (error) {
-      if (!mounted) {
+      if (!mounted || sequence != _loadSequence) {
         return false;
       }
       setState(() {
@@ -70,7 +77,7 @@ class _MyRoutePageState extends State<MyRoutePage> {
   }
 
   Future<void> _advance(DeliveryStop stop) async {
-    if (_updatingOrderId != null) return;
+    if (_isMutating) return;
     final messenger = ScaffoldMessenger.of(context);
     setState(() {
       _updatingOrderId = stop.orderId;
@@ -96,6 +103,63 @@ class _MyRoutePageState extends State<MyRoutePage> {
     }
     setState(() {
       _updatingOrderId = null;
+    });
+    messenger.showSnackBar(SnackBar(content: Text(message)));
+  }
+
+  Future<void> _start(DriverRoute route) async {
+    if (_isMutating ||
+        _startNeedsRefresh ||
+        !widget.user.isDriver ||
+        route.status != 'ASSIGNED') {
+      return;
+    }
+    final messenger = ScaffoldMessenger.of(context);
+    // Invalida cualquier GET anterior que pudiera devolver ASSIGNED tarde.
+    ++_loadSequence;
+    setState(() {
+      _startingRouteId = route.id;
+    });
+    String message;
+    try {
+      final startedAt = await widget.routesService.startRoute(route.id);
+      if (!mounted) return;
+      setState(() {
+        _routes = [
+          for (final current in _routes)
+            if (current.id == route.id)
+              current.withConfirmedStart(startedAt)
+            else
+              current,
+        ];
+      });
+      final refreshed = await _load();
+      message = refreshed
+          ? 'Ruta iniciada.'
+          : 'El servidor confirmó el inicio. No se pudo actualizar la lista; desliza para reintentar.';
+    } on RoutesException catch (error) {
+      if (!mounted) return;
+      if (error.statusCode == 401 &&
+          widget.routesService.apiClient.onUnauthorized != null) {
+        // La raíz elimina la sesión y muestra el aviso en el login.
+        return;
+      }
+      // Si la respuesta se pierde, GET puede confirmar que el servidor sí
+      // inició la ruta. Recuperar estado nunca vuelve a enviar POST.
+      if (error.statusCode != 401 && error.statusCode != 403) {
+        final refreshed = await _load();
+        if (!mounted) return;
+        if (!refreshed) {
+          setState(() {
+            _startNeedsRefresh = true;
+          });
+        }
+      }
+      message = error.message;
+    }
+    if (!mounted) return;
+    setState(() {
+      _startingRouteId = null;
     });
     messenger.showSnackBar(SnackBar(content: Text(message)));
   }
@@ -134,7 +198,7 @@ class _MyRoutePageState extends State<MyRoutePage> {
 
     return RefreshIndicator(
       onRefresh: () async {
-        await _load();
+        if (!_isMutating) await _load();
       },
       child: ListView(
         // Permite deslizar para actualizar aunque la lista sea corta.
@@ -145,6 +209,12 @@ class _MyRoutePageState extends State<MyRoutePage> {
           if (errorMessage != null) ...[
             const SizedBox(height: 12),
             _Hint(errorMessage),
+          ],
+          if (_startNeedsRefresh) ...[
+            const SizedBox(height: 12),
+            const _Hint(
+              'Actualiza la lista antes de volver a intentar iniciar una ruta.',
+            ),
           ],
           const SizedBox(height: 20),
           if (_routes.isEmpty)
@@ -160,6 +230,10 @@ class _MyRoutePageState extends State<MyRoutePage> {
               route: route,
               updatingOrderId: _updatingOrderId,
               onAdvance: _advance,
+              canStart: widget.user.isDriver && !_startNeedsRefresh,
+              isStarting: _startingRouteId == route.id,
+              isLocked: _isMutating,
+              onStart: () => _start(route),
             ),
             const SizedBox(height: 16),
           ],
@@ -198,18 +272,29 @@ class _RouteCard extends StatelessWidget {
     required this.route,
     required this.updatingOrderId,
     required this.onAdvance,
+    required this.canStart,
+    required this.isStarting,
+    required this.isLocked,
+    required this.onStart,
   });
 
   final DriverRoute route;
   final String? updatingOrderId;
   final ValueChanged<DeliveryStop> onAdvance;
+  final bool canStart;
+  final bool isStarting;
+  final bool isLocked;
+  final VoidCallback onStart;
 
   @override
   Widget build(BuildContext context) {
     final textTheme = Theme.of(context).textTheme;
     final hint = switch (route.status) {
       'ASSIGNED' => 'Inicia la ruta para poder actualizar las entregas.',
-      'COMPLETED' => 'Ruta completada.',
+      'IN_PROGRESS' => 'Ruta en curso. El orden de las paradas está bloqueado.',
+      'COMPLETED' when route.returnedAt == null =>
+        'Visitas finalizadas. Sigues ocupado: regresa al depósito y confirma tu llegada.',
+      'COMPLETED' => 'Visitas finalizadas. Regreso al depósito confirmado.',
       _ => null,
     };
 
@@ -240,13 +325,32 @@ class _RouteCard extends StatelessWidget {
               style: textTheme.bodyMedium?.copyWith(color: AppColors.textMuted),
             ),
             if (hint != null) ...[const SizedBox(height: 12), _Hint(hint)],
+            if (route.startedAt case final startedAt?) ...[
+              const SizedBox(height: 8),
+              Text(formatRouteStart(startedAt), style: textTheme.bodyMedium),
+            ],
+            if (route.status == 'ASSIGNED' && canStart) ...[
+              const SizedBox(height: 12),
+              FilledButton.icon(
+                key: ValueKey('start-route-${route.id}'),
+                onPressed: isLocked ? null : onStart,
+                icon: isStarting
+                    ? const SizedBox(
+                        width: 18,
+                        height: 18,
+                        child: CircularProgressIndicator(strokeWidth: 2.5),
+                      )
+                    : const Icon(Icons.play_arrow),
+                label: Text(isStarting ? 'Iniciando…' : 'Iniciar ruta'),
+              ),
+            ],
             const SizedBox(height: 8),
             for (final stop in route.stops)
               _StopTile(
                 stop: stop,
                 canAdvance: route.isInProgress,
                 isUpdating: updatingOrderId == stop.orderId,
-                isLocked: updatingOrderId != null,
+                isLocked: isLocked,
                 onAdvance: () => onAdvance(stop),
               ),
           ],
@@ -262,6 +366,14 @@ class _RouteCard extends StatelessWidget {
     final delivered = '${route.deliveredCount} de $total entregados';
     return failed == 0 ? delivered : '$delivered · $failed con intento fallido';
   }
+}
+
+/// Hora confirmada por el servidor, independiente de la zona del teléfono.
+String formatRouteStart(DateTime time) {
+  final local = time.toUtc().subtract(const Duration(hours: 5));
+  final hour = local.hour.toString().padLeft(2, '0');
+  final minute = local.minute.toString().padLeft(2, '0');
+  return 'Inicio: $hour:$minute (Ecuador)';
 }
 
 class _StopTile extends StatelessWidget {

@@ -27,10 +27,14 @@ final loginResponse = http.Response(
 );
 
 void main() {
-  Future<AuthService> openApp(WidgetTester tester) async {
+  Future<AuthService> openApp(
+    WidgetTester tester, {
+    Future<http.Response> Function(http.Request)? server,
+  }) async {
     final authService = AuthService(
       apiClient: ApiClient(
         httpClient: MockClient((request) async {
+          if (server != null) return server(request);
           if (request.method == 'POST') {
             return loginResponse;
           }
@@ -162,5 +166,41 @@ void main() {
       findsOneWidget,
     );
     expect(authService.apiClient.token, isNull);
+  });
+
+  testWidgets('401 al iniciar ruta borra la sesión y vuelve al login', (
+    tester,
+  ) async {
+    final authService = await openApp(
+      tester,
+      server: (request) async {
+        if (request.url.path.endsWith('/auth/login')) return loginResponse;
+        if (request.url.path.endsWith('/routes/r1/start')) {
+          return http.Response('{}', 401);
+        }
+        return http.Response(
+          jsonEncode([
+            {
+              'id': 'r1',
+              'status': 'ASSIGNED',
+              'zone': {'name': 'DEMO', 'code': 'DEMO'},
+              'orders': [],
+            },
+          ]),
+          200,
+        );
+      },
+    );
+    await login(tester);
+    await tester.tap(find.text('Iniciar ruta'));
+    await tester.pumpAndSettle();
+    expect(find.text('INICIAR SESIÓN'), findsOneWidget);
+    expect(
+      find.text('Tu sesión caducó. Inicia sesión de nuevo.'),
+      findsOneWidget,
+    );
+    expect(find.text('Ruta iniciada.'), findsNothing);
+    expect(authService.apiClient.token, isNull);
+    expect(await SessionStorage().read(), isNull);
   });
 }
