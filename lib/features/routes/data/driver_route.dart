@@ -40,6 +40,8 @@ class DriverRoute {
     required this.zoneName,
     required this.zoneCode,
     required this.stops,
+    this.startedAt,
+    this.returnedAt,
   });
 
   factory DriverRoute.fromJson(Map<String, dynamic> json) {
@@ -74,6 +76,8 @@ class DriverRoute {
       zoneName: zone['name'] as String,
       zoneCode: zone['code'] as String,
       stops: stops,
+      startedAt: DateTime.tryParse(json['startedAt'] as String? ?? ''),
+      returnedAt: DateTime.tryParse(json['returnedAt'] as String? ?? ''),
     );
   }
 
@@ -84,9 +88,37 @@ class DriverRoute {
   final String zoneName;
   final String zoneCode;
   final List<DeliveryStop> stops;
+  final DateTime? startedAt;
+  final DateTime? returnedAt;
+
+  /// Aplica únicamente la confirmación del endpoint de inicio, sin alterar
+  /// composición, orden ni resultados de las paradas ya consultadas.
+  DriverRoute withConfirmedStart(DateTime time) => DriverRoute(
+    id: id,
+    status: 'IN_PROGRESS',
+    zoneName: zoneName,
+    zoneCode: zoneCode,
+    stops: stops,
+    startedAt: time,
+    returnedAt: returnedAt,
+  );
 
   /// Solo con la ruta iniciada el backend acepta "En camino" y "Entregado".
   bool get isInProgress => status == 'IN_PROGRESS';
+
+  /// Parada que el chofer atiende ahora; las demás esperan su turno. Es la
+  /// que ya va en camino o, si no hay, la primera por entregar según el
+  /// orden. Un intento fallido también cuenta como parada terminada.
+  DeliveryStop? get currentStop {
+    final open = stops.where((stop) => !stop.isDelivered && !stop.isFailed);
+    return open.where((stop) => stop.status == 'IN_TRANSIT').firstOrNull ??
+        open.where((stop) => stop.status == 'ASSIGNED').firstOrNull;
+  }
+
+  /// Todas las paradas tienen resultado: entregadas o con intento fallido.
+  bool get allStopsResolved =>
+      stops.isNotEmpty &&
+      stops.every((stop) => stop.isDelivered || stop.isFailed);
 
   int get deliveredCount => stops.where((stop) => stop.isDelivered).length;
 

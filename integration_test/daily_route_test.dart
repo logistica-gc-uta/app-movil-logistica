@@ -92,6 +92,10 @@ void main() {
         fail('Expected UI did not appear');
       }
 
+      // La ruta ya iniciada se abre desde su tarjeta con «Continuar ruta».
+      final openRoute = find.byKey(ValueKey('open-route-$routeId'));
+      await waitFor(openRoute);
+      await tester.tap(openRoute);
       await waitFor(find.text('Calle DEMO 1'));
       for (var i = 1; i <= 3; i++) {
         final tile = find

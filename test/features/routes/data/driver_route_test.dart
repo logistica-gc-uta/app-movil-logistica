@@ -28,6 +28,30 @@ Map<String, dynamic> routeJson({
 }
 
 void main() {
+  test(
+    'lee fechas de inicio y regreso y conserva el orden al confirmar inicio',
+    () {
+      final json = routeJson(
+        orders: [order('o2', 2, 'ASSIGNED'), order('o1', 1, 'ASSIGNED')],
+      );
+      json['returnedAt'] = '2026-10-18T18:30:00Z';
+      final route = DriverRoute.fromJson(json);
+      expect(route.startedAt, DateTime.utc(2026, 10, 18, 13));
+      expect(route.returnedAt, DateTime.utc(2026, 10, 18, 18, 30));
+      final started = route.withConfirmedStart(DateTime.utc(2026, 10, 18, 14));
+      expect(started.isInProgress, isTrue);
+      expect(started.stops.map((s) => s.orderId), ['o1', 'o2']);
+      expect(started.startedAt, DateTime.utc(2026, 10, 18, 14));
+      expect(started.zoneName, route.zoneName);
+    },
+  );
+
+  test('fechas ausentes de rutas antiguas quedan sin confirmar', () {
+    final json = routeJson(orders: [])..remove('startedAt');
+    final route = DriverRoute.fromJson(json);
+    expect(route.startedAt, isNull);
+    expect(route.returnedAt, isNull);
+  });
   test('lee la zona, el estado y las paradas de la respuesta', () {
     final route = DriverRoute.fromJson(
       routeJson(orders: [order('o1', 1, 'ASSIGNED')]),
@@ -118,5 +142,45 @@ void main() {
       routeJson(orders: [order('o1', 1, 'DELIVERED')]),
     );
     expect(route.deliveredCount, 1);
+  });
+
+  test('la parada en turno es la primera pendiente según el orden', () {
+    final route = DriverRoute.fromJson(
+      routeJson(
+        orders: [
+          order('o3', 3, 'ASSIGNED'),
+          order('o1', 1, 'DELIVERED'),
+          order('o2', 2, 'ASSIGNED'),
+        ],
+        stops: [
+          {'orderId': 'o1', 'outcome': 'SUCCESSFUL'},
+          {'orderId': 'o2', 'outcome': 'PENDING'},
+          {'orderId': 'o3', 'outcome': 'PENDING'},
+        ],
+      ),
+    );
+    expect(route.currentStop?.orderId, 'o2');
+  });
+
+  test('una parada ya en camino conserva el turno', () {
+    final route = DriverRoute.fromJson(
+      routeJson(
+        orders: [order('o1', 1, 'ASSIGNED'), order('o2', 2, 'IN_TRANSIT')],
+      ),
+    );
+    expect(route.currentStop?.orderId, 'o2');
+  });
+
+  test('sin paradas pendientes no hay turno', () {
+    final route = DriverRoute.fromJson(
+      routeJson(
+        orders: [order('o1', 1, 'DELIVERED'), order('o2', 2, 'ASSIGNED')],
+        stops: [
+          {'orderId': 'o1', 'outcome': 'SUCCESSFUL'},
+          {'orderId': 'o2', 'outcome': 'FAILED'},
+        ],
+      ),
+    );
+    expect(route.currentStop, isNull);
   });
 }
