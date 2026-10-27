@@ -128,7 +128,7 @@ void main() {
       expect(transport.starts, 1);
       expect(find.text('Iniciar ruta'), findsNothing);
       expect(
-        find.text('Ruta en curso. Atiende las paradas en orden, una a la vez.'),
+        find.text('AHORA · PARADA 1'),
         findsOneWidget,
       );
       final started = (await service.fetchMyRoutes(todayInGuayaquil())).single;

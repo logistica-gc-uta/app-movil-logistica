@@ -23,7 +23,7 @@ class MyRoutePage extends StatefulWidget {
   State<MyRoutePage> createState() => _MyRoutePageState();
 }
 
-class _MyRoutePageState extends State<MyRoutePage> {
+class _MyRoutePageState extends State<MyRoutePage> with WidgetsBindingObserver {
   final String _date = todayInGuayaquil();
 
   bool _isLoading = true;
@@ -34,6 +34,7 @@ class _MyRoutePageState extends State<MyRoutePage> {
   String? _updatingOrderId;
   String? _startingRouteId;
   bool _startNeedsRefresh = false;
+  bool _ordersNeedRefresh = false;
   int _loadSequence = 0;
 
   /// Ruta cuyas paradas se están viendo; null muestra las rutas del día.
@@ -48,7 +49,21 @@ class _MyRoutePageState extends State<MyRoutePage> {
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
     _load();
+  }
+
+  @override
+  void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
+    super.dispose();
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    // Al volver a la app se consulta el estado real, sin reenviar mutaciones.
+    // Si hay una operación pendiente, su propia recuperación hará el GET.
+    if (state == AppLifecycleState.resumed && !_isMutating) _load();
   }
 
   Future<bool> _load() async {
@@ -63,6 +78,7 @@ class _MyRoutePageState extends State<MyRoutePage> {
         _errorMessage = null;
         _isLoading = false;
         _startNeedsRefresh = false;
+        _ordersNeedRefresh = false;
       });
       return true;
     } on RoutesException catch (error) {
@@ -86,15 +102,21 @@ class _MyRoutePageState extends State<MyRoutePage> {
   }
 
   Future<void> _advance(DeliveryStop stop) async {
-    if (_isMutating) return;
+    if (_isMutating || _ordersNeedRefresh) return;
     // Las paradas se atienden en orden: solo avanza la parada actual.
-    if (_routes.every((route) => route.currentStop?.orderId != stop.orderId)) {
+    if (_routes.every(
+      (route) =>
+          !route.isInProgress || route.currentStop?.orderId != stop.orderId,
+    )) {
       return;
     }
     final messenger = ScaffoldMessenger.of(context);
+    messenger.hideCurrentSnackBar();
     bool hasStop(DriverRoute route) =>
         route.stops.any((s) => s.orderId == stop.orderId);
     final wasFinished = _routes.where(hasStop).firstOrNull?.allStopsResolved;
+    // Un GET iniciado antes del PATCH no puede sobrescribir su resultado.
+    ++_loadSequence;
     setState(() {
       _updatingOrderId = stop.orderId;
     });
@@ -107,6 +129,8 @@ class _MyRoutePageState extends State<MyRoutePage> {
       }
       // Solo se informa el cambio después de confirmarlo con el servidor.
       final refreshed = await _load();
+      if (!mounted) return;
+      _ordersNeedRefresh = !refreshed;
       final route = _routes.where(hasStop).firstOrNull;
       if (refreshed && wasFinished == false && route != null) {
         if (route.allStopsResolved) _finishedRouteId = route.id;
@@ -116,6 +140,18 @@ class _MyRoutePageState extends State<MyRoutePage> {
           : 'El servidor confirmó el cambio, pero no se pudo actualizar la lista. '
                 'Desliza hacia abajo para consultar el estado actual.';
     } on RoutesException catch (error) {
+      if (!mounted) return;
+      if (error.statusCode == 401 &&
+          widget.routesService.apiClient.onUnauthorized != null) {
+        return;
+      }
+      // Un timeout puede ocurrir después de persistir. Consultar antes de
+      // permitir otro intento; nunca confirmar éxito por una respuesta perdida.
+      if (error.statusCode != 401 && error.statusCode != 403) {
+        final refreshed = await _load();
+        if (!mounted) return;
+        _ordersNeedRefresh = !refreshed;
+      }
       message = error.message;
     }
     if (!mounted) {
@@ -130,6 +166,7 @@ class _MyRoutePageState extends State<MyRoutePage> {
   Future<void> _start(DriverRoute route) async {
     if (_isMutating ||
         _startNeedsRefresh ||
+        _ordersNeedRefresh ||
         !widget.user.isDriver ||
         route.status != 'ASSIGNED') {
       return;
@@ -267,6 +304,12 @@ class _MyRoutePageState extends State<MyRoutePage> {
                   ),
                 ),
           actions: [
+            if (_errorMessage != null && _routes.isNotEmpty)
+              IconButton(
+                onPressed: _isMutating ? null : _load,
+                icon: const Icon(Icons.refresh_rounded),
+                tooltip: 'Actualizar estado',
+              ),
             if (open == null)
               Padding(
                 padding: const EdgeInsets.only(right: 12),
@@ -309,7 +352,6 @@ class _MyRoutePageState extends State<MyRoutePage> {
       );
     }
 
-    final stopCount = _routes.fold(0, (sum, route) => sum + route.stops.length);
     // Ambas vistas comparten la misma lista para que deslizar y actualizar
     // no se interrumpa al entrar o salir de una ruta.
     return RefreshIndicator(
@@ -321,20 +363,20 @@ class _MyRoutePageState extends State<MyRoutePage> {
         physics: const AlwaysScrollableScrollPhysics(),
         padding: const EdgeInsets.fromLTRB(20, 4, 20, 40),
         children: [
-          if (open == null)
-            _Greeting(
-              name: widget.user.name,
-              date: _date,
-              stopCount: stopCount,
-            ),
-          if (errorMessage != null) ...[
+          if (open == null) _Greeting(name: widget.user.name, date: _date),
+          if (errorMessage != null ||
+              _ordersNeedRefresh ||
+              _startNeedsRefresh) ...[
             const SizedBox(height: 16),
-            _Notice(errorMessage),
-          ],
-          if (_startNeedsRefresh) ...[
-            const SizedBox(height: 16),
-            const _Notice(
-              'Actualiza la lista antes de volver a intentar iniciar una ruta.',
+            _Notice(
+              errorMessage ?? 'El estado de la ruta necesita actualizarse.',
+              detail: _ordersNeedRefresh
+                  ? 'Actualiza el estado antes de volver a cambiar una entrega.'
+                  : _startNeedsRefresh
+                  ? 'Actualiza la lista antes de volver a intentar iniciar una ruta.'
+                  : null,
+              onRetry: () => _load(),
+              retryEnabled: !_isMutating,
             ),
           ],
           if (open != null) ...[
@@ -342,7 +384,7 @@ class _MyRoutePageState extends State<MyRoutePage> {
             _RouteStops(
               route: open,
               updatingOrderId: _updatingOrderId,
-              isLocked: _isMutating,
+              isLocked: _isMutating || _ordersNeedRefresh,
               onAdvance: _advance,
               onArrived: _celebrateIfFinished,
             ),
@@ -357,11 +399,13 @@ class _MyRoutePageState extends State<MyRoutePage> {
                     'Desliza hacia abajo para actualizar.',
               ),
             for (final route in _routes) ...[
-              if (route.allStopsResolved) _FinishedBanner(route),
               _RouteHero(
                 key: ValueKey('route-${route.id}'),
                 route: route,
-                canStart: widget.user.isDriver && !_startNeedsRefresh,
+                canStart:
+                    widget.user.isDriver &&
+                    !_startNeedsRefresh &&
+                    !_ordersNeedRefresh,
                 isStarting: _startingRouteId == route.id,
                 isLocked: _isMutating,
                 onStart: () => _start(route),
@@ -382,7 +426,6 @@ class _Tone {
   static const page = Color(0xFFF4F5F7);
   static const card = Colors.white;
   static const blue = Color(0xFF3D5A7A);
-  static const blueSoft = Color(0xFFECEFF3);
   static const green = Color(0xFF3F6B52);
   static const greenSoft = Color(0xFFEDF1EE);
   static const red = Color(0xFFA14A42);
@@ -391,6 +434,8 @@ class _Tone {
   static const amberSoft = Color(0xFFF7F2EA);
   static const grey = Color(0xFFEDEEF1);
   static const rail = Color(0xFFDADDE3);
+  static const fresh = Color(0xFFEDF5F1);
+  static const accent = Color(0xFF286B56);
 
   // Variantes claras para el bloque oscuro de la ruta.
   static const blueOnDark = Color(0xFF9DB2C9);
@@ -424,58 +469,39 @@ TextStyle? _overline(BuildContext context, Color color) {
 }
 
 class _Greeting extends StatelessWidget {
-  const _Greeting({
-    required this.name,
-    required this.date,
-    required this.stopCount,
-  });
-
+  const _Greeting({required this.name, required this.date});
   final String name;
   final String date;
-  final int stopCount;
-
   @override
-  Widget build(BuildContext context) {
-    final textTheme = Theme.of(context).textTheme;
-
-    return Column(
+  Widget build(BuildContext context) => Padding(
+    padding: const EdgeInsets.only(top: 16, bottom: 8),
+    child: Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         Text(
-          formatLongDate(date).toUpperCase(),
-          style: _overline(context, AppColors.textMuted),
+          formatLongDate(date),
+          style: Theme.of(
+            context,
+          ).textTheme.bodyMedium?.copyWith(color: AppColors.textMuted),
         ),
         const SizedBox(height: 8),
-        // La misma letra que "SPEEDRUN", en tamaño de título.
-        Text('Hola, $name', style: textTheme.headlineMedium),
-        if (stopCount > 0) ...[
-          const SizedBox(height: 6),
-          Text(
-            stopCount == 1
-                ? 'Tienes 1 parada programada para hoy.'
-                : 'Tienes $stopCount paradas programadas para hoy.',
-            style: textTheme.bodyLarge?.copyWith(color: AppColors.textMuted),
-          ),
-        ],
+        Text(
+          'Hola, $name',
+          style: Theme.of(
+            context,
+          ).textTheme.headlineMedium?.copyWith(fontSize: 26),
+        ),
       ],
-    );
-  }
+    ),
+  );
 }
 
 /// Aviso de cada estado de ruta, con su icono.
 (IconData, String)? _routeHint(DriverRoute route) {
   return switch (route.status) {
-    'ASSIGNED' => (
-      Icons.info_outline_rounded,
-      'Inicia la ruta para poder actualizar las entregas.',
-    ),
     'IN_PROGRESS' when route.allStopsResolved => (
       Icons.home_work_outlined,
       'Todas las paradas están atendidas. Regresa al depósito.',
-    ),
-    'IN_PROGRESS' => (
-      Icons.lock_outline_rounded,
-      'Ruta en curso. Atiende las paradas en orden, una a la vez.',
     ),
     'COMPLETED' when route.returnedAt == null => (
       Icons.home_work_outlined,
@@ -496,6 +522,10 @@ String _progressText(DriverRoute route) {
   final delivered = '${route.deliveredCount} de $total entregados';
   return failed == 0 ? delivered : '$delivered · $failed con intento fallido';
 }
+
+String _resolvedText(DriverRoute route) =>
+    '${(route.deliveredFraction * 100).round()} % entregado · '
+    '${route.resolvedCount}/${route.stops.length} visitas resueltas';
 
 /// Tarjeta oscura de una ruta del día. El icono de la esquina la gira para
 /// ver por detrás el resumen de sus paradas.
@@ -553,7 +583,10 @@ class _RouteHeroState extends State<_RouteHero> {
   Widget _card(BuildContext context, List<Widget> children) {
     return Container(
       padding: const EdgeInsets.all(22),
-      color: AppColors.primary,
+      decoration: BoxDecoration(
+        color: AppColors.primary,
+        borderRadius: BorderRadius.circular(14),
+      ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
@@ -572,7 +605,10 @@ class _RouteHeroState extends State<_RouteHero> {
       key: ValueKey('flip-route-${widget.route.id}'),
       onPressed: () => setState(() => _showStops = !_showStops),
       tooltip: _showStops ? 'Ver la ruta' : 'Ver las paradas',
-      icon: const Icon(Icons.threesixty_rounded, size: 22),
+      icon: Icon(
+        _showStops ? Icons.close : Icons.format_list_bulleted,
+        size: 20,
+      ),
       style: IconButton.styleFrom(
         backgroundColor: Colors.white.withValues(alpha: 0.12),
         foregroundColor: Colors.white,
@@ -586,72 +622,64 @@ class _RouteHeroState extends State<_RouteHero> {
     final route = widget.route;
     final textTheme = Theme.of(context).textTheme;
     final hint = _routeHint(route);
-
     return [
       Row(
-        crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  'ZONA ${route.zoneCode}',
-                  style: _overline(context, Colors.white60),
-                ),
-                const SizedBox(height: 6),
-                Text(
-                  route.zoneName,
-                  style: textTheme.headlineMedium?.copyWith(
-                    color: Colors.white,
+            child: route.allStopsResolved
+                ? _FinishedBanner(route)
+                : Text(
+                    'RUTA DEL DÍA',
+                    style: _overline(context, Colors.white60),
                   ),
-                ),
-              ],
+          ),
+          _RouteStatusChip(route.status, onDark: true),
+        ],
+      ),
+      const SizedBox(height: 18),
+      Row(
+        children: [
+          Expanded(
+            child: Text(
+              route.zoneName,
+              style: textTheme.headlineMedium?.copyWith(
+                color: Colors.white,
+                fontSize: 32,
+              ),
             ),
           ),
-          const SizedBox(width: 12),
           _flipButton(),
         ],
       ),
-      const SizedBox(height: 12),
-      Align(
-        alignment: Alignment.centerLeft,
-        child: _RouteStatusChip(route.status, onDark: true),
-      ),
-      const SizedBox(height: 24),
+      const SizedBox(height: 22),
       _RouteProgress(stops: route.stops, onDark: true),
       const SizedBox(height: 14),
       Text(
         _progressText(route),
-        style: _weight(
-          textTheme.bodyLarge,
-          FontWeight.w600,
+        style: textTheme.bodyLarge?.copyWith(
           color: Colors.white,
+          fontWeight: FontWeight.w600,
         ),
       ),
-      if (route.startedAt case final startedAt?) ...[
-        const SizedBox(height: 6),
-        _StartTime(startedAt, color: Colors.white70),
-      ],
+      const SizedBox(height: 4),
+      Text(
+        _resolvedText(route),
+        style: textTheme.bodySmall?.copyWith(color: Colors.white60),
+      ),
       if (hint case (final icon, final text)) ...[
-        const SizedBox(height: 18),
-        Container(
-          padding: const EdgeInsets.all(14),
-          color: Colors.white.withValues(alpha: 0.08),
-          child: Row(
-            children: [
-              Icon(icon, size: 20, color: Colors.white70),
-              const SizedBox(width: 12),
-              Expanded(
-                child: Text(
-                  text,
-                  style: textTheme.bodyMedium?.copyWith(
-                    color: Colors.white.withValues(alpha: 0.85),
-                  ),
-                ),
+        const SizedBox(height: 16),
+        Row(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Icon(icon, size: 16, color: Colors.white70),
+            const SizedBox(width: 8),
+            Expanded(
+              child: Text(
+                text,
+                style: textTheme.bodySmall?.copyWith(color: Colors.white70),
               ),
-            ],
-          ),
+            ),
+          ],
         ),
       ],
     ];
@@ -732,12 +760,12 @@ class _RouteHeroState extends State<_RouteHero> {
         foregroundColor: AppColors.ink,
         disabledBackgroundColor: Colors.white.withValues(alpha: 0.6),
         disabledForegroundColor: AppColors.ink,
-        minimumSize: const Size.fromHeight(56),
-        shape: const RoundedRectangleBorder(),
+        minimumSize: const Size.fromHeight(50),
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
         textStyle: _weight(
           Theme.of(context).textTheme.labelLarge,
-          FontWeight.w800,
-          size: 17,
+          FontWeight.w600,
+          size: 15,
         )?.copyWith(letterSpacing: -0.3),
       ),
       child: Row(
@@ -829,7 +857,6 @@ class _RouteStops extends StatelessWidget {
     required this.onAdvance,
     required this.onArrived,
   });
-
   final DriverRoute route;
   final String? updatingOrderId;
   final bool isLocked;
@@ -839,104 +866,77 @@ class _RouteStops extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final textTheme = Theme.of(context).textTheme;
-    final stops = route.stops;
-    final current = route.currentStop;
     final hint = _routeHint(route);
-
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
         Container(
-          padding: const EdgeInsets.all(18),
-          color: _Tone.card,
+          padding: const EdgeInsets.all(20),
+          decoration: BoxDecoration(
+            color: _Tone.card,
+            borderRadius: BorderRadius.circular(14),
+          ),
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
               Row(
                 children: [
                   Expanded(
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Text(
-                          'ZONA ${route.zoneCode}',
-                          style: _overline(context, AppColors.textMuted),
-                        ),
-                        const SizedBox(height: 4),
-                        Text(
-                          route.zoneName,
-                          style: textTheme.headlineMedium?.copyWith(
-                            fontSize: 24,
-                          ),
-                        ),
-                      ],
+                    child: Text(
+                      route.zoneName,
+                      style: textTheme.headlineMedium?.copyWith(fontSize: 26),
                     ),
                   ),
-                  const SizedBox(width: 12),
                   _RouteStatusChip(route.status, onDark: false),
                 ],
               ),
               const SizedBox(height: 18),
-              _RouteProgress(stops: stops, onDark: false),
+              _RouteProgress(stops: route.stops, onDark: false),
               const SizedBox(height: 12),
               Text(
                 _progressText(route),
-                style: _weight(
-                  textTheme.bodyLarge,
-                  FontWeight.w600,
-                  color: AppColors.ink,
+                style: textTheme.bodyMedium?.copyWith(
+                  fontWeight: FontWeight.w600,
+                ),
+              ),
+              const SizedBox(height: 2),
+              Text(
+                _resolvedText(route),
+                style: textTheme.bodySmall?.copyWith(
+                  color: AppColors.textMuted,
                 ),
               ),
               if (route.startedAt case final startedAt?) ...[
-                const SizedBox(height: 4),
+                const SizedBox(height: 6),
                 _StartTime(startedAt, color: AppColors.textMuted),
               ],
             ],
           ),
         ),
-        if (hint case (final icon, final text)) ...[
+        if (hint case (_, final text)) ...[
           const SizedBox(height: 14),
-          Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 4),
-            child: Row(
-              children: [
-                Icon(icon, size: 18, color: AppColors.textMuted),
-                const SizedBox(width: 10),
-                Expanded(
-                  child: Text(
-                    text,
-                    style: textTheme.bodyMedium?.copyWith(
-                      color: AppColors.textMuted,
-                    ),
-                  ),
-                ),
-              ],
-            ),
-          ),
+          _Notice(text),
         ],
-        const SizedBox(height: 24),
-        Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 4),
-          child: Text(
-            'Paradas',
-            style: _weight(
-              textTheme.titleLarge,
-              FontWeight.w800,
-              color: AppColors.ink,
+        const SizedBox(height: 28),
+        Row(
+          children: [
+            Expanded(child: Text('Paradas', style: textTheme.titleLarge)),
+            Text(
+              '${route.stops.length} en tu ruta',
+              style: textTheme.bodySmall?.copyWith(color: AppColors.textMuted),
             ),
-          ),
+          ],
         ),
-        const SizedBox(height: 14),
-        for (var i = 0; i < stops.length; i++)
+        const SizedBox(height: 12),
+        for (var i = 0; i < route.stops.length; i++)
           _StopItem(
-            key: ValueKey('stop-${stops[i].orderId}'),
-            stop: stops[i],
-            isFirst: i == 0,
-            isLast: i == stops.length - 1,
-            currentStop: route.isInProgress ? current : null,
-            isUpdating: updatingOrderId == stops[i].orderId,
+            key: ValueKey('stop-${route.stops[i].orderId}'),
+            stop: route.stops[i],
+            isLast: i == route.stops.length - 1,
+            currentStop: route.isInProgress ? route.currentStop : null,
+            isUpdating: updatingOrderId == route.stops[i].orderId,
             isLocked: isLocked,
-            onAdvance: () => onAdvance(stops[i]),
+            onAdvance: () => onAdvance(route.stops[i]),
             onArrived: onArrived,
           ),
       ],
@@ -996,14 +996,17 @@ class _RouteStatusChip extends StatelessWidget {
 
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 7),
-      color: onDark ? Colors.white.withValues(alpha: 0.12) : _Tone.grey,
+      decoration: BoxDecoration(
+        color: onDark ? Colors.white.withValues(alpha: 0.12) : _Tone.fresh,
+        borderRadius: BorderRadius.circular(onDark ? 0 : 6),
+      ),
       child: Row(
         mainAxisSize: MainAxisSize.min,
         children: [
           Container(
             width: 8,
             height: 8,
-            decoration: BoxDecoration(color: dot, shape: BoxShape.circle),
+            decoration: BoxDecoration(color: dot, shape: BoxShape.rectangle),
           ),
           const SizedBox(width: 8),
           Text(
@@ -1020,95 +1023,44 @@ class _RouteStatusChip extends StatelessWidget {
   }
 }
 
-/// Barra con un tramo por parada y un camión que avanza según las visitas
-/// resueltas, entregadas o fallidas, hasta la bandera de llegada.
+/// Un segmento por visita: el color distingue éxito, fallo y pendiente.
 class _RouteProgress extends StatelessWidget {
   const _RouteProgress({required this.stops, required this.onDark});
-
   final List<DeliveryStop> stops;
   final bool onDark;
-
-  static const _truck = 30.0;
-
-  Color _segment(DeliveryStop stop) {
-    if (stop.isDelivered) return onDark ? _Tone.greenOnDark : _Tone.green;
-    if (stop.isFailed) return onDark ? _Tone.redOnDark : _Tone.red;
-    if (stop.status == 'IN_TRANSIT') {
-      return onDark ? _Tone.blueOnDark : _Tone.blue;
-    }
-    return onDark ? Colors.white.withValues(alpha: 0.18) : _Tone.rail;
-  }
-
   @override
-  Widget build(BuildContext context) {
-    final resolved = stops.where((s) => s.isDelivered || s.isFailed).length;
-    final target = stops.isEmpty ? 0.0 : resolved / stops.length;
-    final ink = onDark ? Colors.white : AppColors.ink;
-
-    return LayoutBuilder(
-      builder: (context, constraints) {
-        final travel = constraints.maxWidth - _truck;
-        return SizedBox(
-          height: 44,
-          child: Stack(
-            children: [
-              Positioned(
-                left: 0,
-                right: 0,
-                bottom: 0,
-                child: Row(
-                  children: [
-                    for (var i = 0; i < stops.length; i++) ...[
-                      if (i > 0) const SizedBox(width: 4),
-                      Expanded(
-                        child: AnimatedContainer(
-                          duration: const Duration(milliseconds: 400),
-                          height: 8,
-                          color: _segment(stops[i]),
-                        ),
-                      ),
-                    ],
-                  ],
-                ),
-              ),
-              if (target < 1)
-                Positioned(
-                  right: 0,
-                  top: 6,
-                  child: Icon(
-                    Icons.flag_rounded,
-                    size: 22,
-                    color: onDark ? Colors.white38 : AppColors.hint,
-                  ),
-                ),
-              TweenAnimationBuilder<double>(
-                tween: Tween(begin: 0, end: target),
-                duration: const Duration(milliseconds: 900),
-                curve: Curves.easeOutCubic,
-                builder: (context, value, child) =>
-                    Positioned(left: travel * value, top: 0, child: child!),
-                child: Icon(
-                  Icons.local_shipping_rounded,
-                  size: _truck,
-                  color: ink,
-                ),
-              ),
-            ],
+  Widget build(BuildContext context) => Row(
+    children: [
+      for (var i = 0; i < stops.length; i++) ...[
+        if (i > 0) const SizedBox(width: 5),
+        Expanded(
+          child: AnimatedContainer(
+            duration: const Duration(milliseconds: 350),
+            height: 4,
+            decoration: BoxDecoration(
+              color: stops[i].isDelivered
+                  ? (onDark ? _Tone.greenOnDark : _Tone.green)
+                  : stops[i].isFailed
+                  ? (onDark ? _Tone.redOnDark : _Tone.red)
+                  : stops[i].status == 'IN_TRANSIT'
+                  ? (onDark ? _Tone.blueOnDark : _Tone.blue)
+                  : (onDark ? Colors.white24 : _Tone.rail),
+              borderRadius: BorderRadius.circular(3),
+            ),
           ),
-        );
-      },
-    );
-  }
+        ),
+      ],
+    ],
+  );
 }
 
-/// Una parada en su propio bloque, unida a las demás por una línea de ruta.
+/// Una parada compacta; la parada actual muestra su acción y recorrido.
 /// Al confirmarse la entrega, el camión termina su recorrido antes de mostrar
 /// el resultado.
 class _StopItem extends StatefulWidget {
   const _StopItem({
     super.key,
     required this.stop,
-    required this.isFirst,
     required this.isLast,
     required this.currentStop,
     required this.isUpdating,
@@ -1118,7 +1070,6 @@ class _StopItem extends StatefulWidget {
   });
 
   final DeliveryStop stop;
-  final bool isFirst;
   final bool isLast;
 
   /// Parada en turno de una ruta en curso; null si no se puede avanzar.
@@ -1129,10 +1080,6 @@ class _StopItem extends StatefulWidget {
 
   /// Se llama cuando el camión llega al destino tras confirmar la entrega.
   final VoidCallback onArrived;
-
-  static const _marker = 36.0;
-  static const _markerTop = 18.0;
-  static const _markerCenter = _markerTop + _marker / 2;
 
   @override
   State<_StopItem> createState() => _StopItemState();
@@ -1163,92 +1110,18 @@ class _StopItemState extends State<_StopItem> {
   }
 
   @override
-  Widget build(BuildContext context) {
-    final stop = widget.stop;
-    final resolved = !_arriving && (stop.isDelivered || stop.isFailed);
-
-    return Stack(
-      children: [
-        if (!(widget.isFirst && widget.isLast))
-          Positioned(
-            left: _StopItem._marker / 2 - 1,
-            top: widget.isFirst ? _StopItem._markerCenter : 0,
-            bottom: widget.isLast ? null : 0,
-            height: widget.isLast ? _StopItem._markerCenter : null,
-            child: AnimatedContainer(
-              duration: const Duration(milliseconds: 300),
-              width: 2,
-              color: resolved ? _Tone.green.withValues(alpha: 0.4) : _Tone.rail,
-            ),
-          ),
-        Padding(
-          padding: EdgeInsets.only(
-            left: _StopItem._marker + 14,
-            bottom: widget.isLast ? 0 : 14,
-          ),
-          child: _StopCard(
-            stop: stop,
-            arriving: _arriving,
-            onArrived: _arrived,
-            currentStop: widget.currentStop,
-            isUpdating: widget.isUpdating,
-            isLocked: widget.isLocked,
-            onAdvance: widget.onAdvance,
-          ),
-        ),
-        Positioned(
-          left: 0,
-          top: _StopItem._markerTop,
-          child: _StopMarker(stop, arriving: _arriving),
-        ),
-      ],
-    );
-  }
-}
-
-/// Círculo con el número de parada; al resolverse muestra el resultado.
-class _StopMarker extends StatelessWidget {
-  const _StopMarker(this.stop, {required this.arriving});
-
-  final DeliveryStop stop;
-  final bool arriving;
-
-  @override
-  Widget build(BuildContext context) {
-    final delivered = stop.isDelivered && !arriving;
-    final (background, foreground) = switch (stop) {
-      _ when delivered => (_Tone.green, Colors.white),
-      _ when stop.isFailed => (_Tone.red, Colors.white),
-      _ when arriving || stop.status == 'IN_TRANSIT' => (
-        _Tone.blue,
-        Colors.white,
-      ),
-      _ => (_Tone.card, AppColors.ink),
-    };
-    final icon = delivered
-        ? Icons.check_rounded
-        : stop.isFailed
-        ? Icons.close_rounded
-        : null;
-
-    return AnimatedContainer(
-      duration: const Duration(milliseconds: 300),
-      width: _StopItem._marker,
-      height: _StopItem._marker,
-      alignment: Alignment.center,
-      decoration: BoxDecoration(color: background, shape: BoxShape.circle),
-      child: icon != null
-          ? Icon(icon, size: 20, color: foreground)
-          : Text(
-              stop.stopOrder?.toString() ?? '–',
-              style: _weight(
-                Theme.of(context).textTheme.bodyMedium,
-                FontWeight.w700,
-                color: foreground,
-              ),
-            ),
-    );
-  }
+  Widget build(BuildContext context) => Padding(
+    padding: EdgeInsets.only(bottom: widget.isLast ? 0 : 8),
+    child: _StopCard(
+      stop: widget.stop,
+      arriving: _arriving,
+      onArrived: _arrived,
+      currentStop: widget.currentStop,
+      isUpdating: widget.isUpdating,
+      isLocked: widget.isLocked,
+      onAdvance: widget.onAdvance,
+    ),
+  );
 }
 
 class _StopCard extends StatelessWidget {
@@ -1273,6 +1146,9 @@ class _StopCard extends StatelessWidget {
   /// Estado visible de la parada. Mientras el camión llega se mantiene el
   /// trayecto, con la misma clave, para que su animación continúe.
   Widget _status() {
+    if (!arriving && stop.status == 'ASSIGNED') {
+      return const SizedBox.shrink();
+    }
     if (stop.isDelivered && !arriving) {
       return const _ResultPanel(
         key: ValueKey('delivered'),
@@ -1295,14 +1171,7 @@ class _StopCard extends StatelessWidget {
       key: const ValueKey('open'),
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
-        Align(
-          alignment: Alignment.centerLeft,
-          child: arriving
-              ? const _Badge('Entregando', _Tone.blue, _Tone.blueSoft)
-              : _Badge.forStop(stop),
-        ),
         if (arriving || stop.status == 'IN_TRANSIT') ...[
-          const SizedBox(height: 14),
           _TransitTrack(arrived: arriving, onArrived: onArrived),
         ],
       ],
@@ -1317,7 +1186,7 @@ class _StopCard extends StatelessWidget {
       'ASSIGNED' when pending => (
         'En camino',
         Icons.local_shipping_rounded,
-        AppColors.primary,
+        _Tone.accent,
       ),
       'IN_TRANSIT' when pending => (
         'Entregado',
@@ -1328,18 +1197,91 @@ class _StopCard extends StatelessWidget {
     };
     final current = currentStop;
     final isTurn = current != null && current.orderId == stop.orderId;
+    if (!isTurn && !arriving) {
+      final color = stop.isFailed
+          ? _Tone.red
+          : stop.isDelivered
+          ? _Tone.green
+          : AppColors.textMuted;
+      return Container(
+        decoration: BoxDecoration(
+          color: _Tone.card,
+          borderRadius: BorderRadius.circular(12),
+        ),
+        padding: const EdgeInsets.all(16),
+        child: Row(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Container(
+              width: 32,
+              height: 32,
+              alignment: Alignment.center,
+              decoration: BoxDecoration(
+                color: stop.isDelivered ? _Tone.fresh : _Tone.grey,
+                borderRadius: BorderRadius.circular(8),
+              ),
+              child: Text(
+                '${stop.stopOrder ?? '–'}',
+                style: textTheme.bodySmall?.copyWith(
+                  fontWeight: FontWeight.w600,
+                ),
+              ),
+            ),
+            const SizedBox(width: 12),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    stop.address,
+                    style: textTheme.bodyMedium?.copyWith(
+                      fontWeight: FontWeight.w500,
+                      color: AppColors.ink,
+                    ),
+                  ),
+                  const SizedBox(height: 4),
+                  if (stop.isDelivered || stop.isFailed)
+                    Text(
+                      stop.isFailed ? 'Intento fallido' : 'Entregado con éxito',
+                      style: textTheme.bodySmall?.copyWith(color: color),
+                    )
+                  else
+                    Text(
+                      _stopStatusLabel(stop),
+                      style: textTheme.bodySmall?.copyWith(color: color),
+                    ),
+                ],
+              ),
+            ),
+            const SizedBox(width: 8),
+            Icon(
+              stop.isFailed
+                  ? Icons.close
+                  : stop.isDelivered
+                  ? Icons.check
+                  : Icons.lock_outline,
+              size: 16,
+              color: color,
+            ),
+          ],
+        ),
+      );
+    }
 
     // La dirección y el botón comparten esta columna: así se ubica la
     // acción de cada parada.
     return Container(
-      padding: const EdgeInsets.all(18),
-      color: _Tone.card,
+      padding: const EdgeInsets.all(20),
+      decoration: BoxDecoration(
+        color: _Tone.fresh,
+        borderRadius: BorderRadius.circular(14),
+      ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
           Text(
-            'PARADA ${stop.stopOrder ?? '–'}',
-            style: _overline(context, AppColors.textMuted),
+            'AHORA · PARADA ${stop.stopOrder ?? '–'}',
+            style: _overline(context, _Tone.accent),
           ),
           const SizedBox(height: 6),
           Text(
@@ -1347,6 +1289,7 @@ class _StopCard extends StatelessWidget {
             style: _weight(
               textTheme.titleMedium,
               FontWeight.w700,
+              size: 21,
               color: AppColors.ink,
             ),
           ),
@@ -1378,7 +1321,9 @@ class _StopCard extends StatelessWidget {
                 disabledBackgroundColor: color.withValues(alpha: 0.45),
                 disabledForegroundColor: Colors.white,
                 minimumSize: const Size.fromHeight(52),
-                shape: const RoundedRectangleBorder(),
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(10),
+                ),
                 textStyle: _weight(
                   textTheme.labelLarge,
                   FontWeight.w700,
@@ -1403,43 +1348,7 @@ class _StopCard extends StatelessWidget {
                       ],
                     ),
             ),
-          ] else if (action != null && current != null) ...[
-            const SizedBox(height: 16),
-            _WaitingTurn(current),
           ],
-        ],
-      ),
-    );
-  }
-}
-
-/// Aviso en lugar del botón: la parada espera a que termine la actual.
-class _WaitingTurn extends StatelessWidget {
-  const _WaitingTurn(this.current);
-
-  final DeliveryStop current;
-
-  @override
-  Widget build(BuildContext context) {
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 14),
-      color: _Tone.grey,
-      child: Row(
-        children: [
-          const Icon(
-            Icons.lock_outline_rounded,
-            size: 18,
-            color: AppColors.textMuted,
-          ),
-          const SizedBox(width: 10),
-          Expanded(
-            child: Text(
-              'Disponible al terminar la parada ${current.stopOrder ?? '–'}',
-              style: Theme.of(
-                context,
-              ).textTheme.bodyMedium?.copyWith(color: AppColors.textMuted),
-            ),
-          ),
         ],
       ),
     );
@@ -1462,7 +1371,10 @@ class _TransitTrack extends StatelessWidget {
   Widget build(BuildContext context) {
     return Container(
       padding: const EdgeInsets.fromLTRB(14, 12, 14, 12),
-      color: _Tone.blueSoft,
+      decoration: BoxDecoration(
+        color: Colors.white.withValues(alpha: 0.65),
+        borderRadius: BorderRadius.circular(10),
+      ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
@@ -1630,7 +1542,7 @@ class _ResultPanel extends StatelessWidget {
             child: Container(
               width: 32,
               height: 32,
-              decoration: BoxDecoration(color: color, shape: BoxShape.circle),
+              decoration: BoxDecoration(color: color),
               child: Icon(icon, size: 20, color: Colors.white),
             ),
           ),
@@ -1651,59 +1563,17 @@ class _ResultPanel extends StatelessWidget {
   }
 }
 
-/// Etiqueta de estado de una parada aún sin resultado.
-class _Badge extends StatelessWidget {
-  const _Badge(this.label, this.foreground, this.background);
-
-  factory _Badge.forStop(DeliveryStop stop) {
-    if (stop.hasPersistedVisit && stop.status == 'DELIVERED') {
-      return const _Badge(
-        'Visita sin confirmar',
-        AppColors.textMuted,
-        _Tone.grey,
-      );
-    }
-    return switch (stop.status) {
-      'IN_TRANSIT' => const _Badge('En camino', _Tone.blue, _Tone.blueSoft),
-      'CANCELLED' => const _Badge('Cancelado', AppColors.textMuted, _Tone.grey),
-      'PENDING' => const _Badge('Pendiente', AppColors.textMuted, _Tone.grey),
-      _ => const _Badge('Por entregar', AppColors.text, _Tone.grey),
-    };
+/// Estado comercial separado del resultado persistido de la visita.
+String _stopStatusLabel(DeliveryStop stop) {
+  if (stop.hasPersistedVisit && stop.status == 'DELIVERED') {
+    return 'Visita sin confirmar';
   }
-
-  final String label;
-  final Color foreground;
-  final Color background;
-
-  @override
-  Widget build(BuildContext context) {
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
-      decoration: BoxDecoration(color: background),
-      child: Row(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          Container(
-            width: 7,
-            height: 7,
-            decoration: BoxDecoration(
-              color: foreground,
-              shape: BoxShape.circle,
-            ),
-          ),
-          const SizedBox(width: 8),
-          Text(
-            label,
-            style: _weight(
-              Theme.of(context).textTheme.labelSmall,
-              FontWeight.w600,
-              color: foreground,
-            ),
-          ),
-        ],
-      ),
-    );
-  }
+  return switch (stop.status) {
+    'IN_TRANSIT' => 'En camino',
+    'CANCELLED' => 'Cancelado',
+    'PENDING' => 'Pendiente',
+    _ => 'Por entregar',
+  };
 }
 
 /// Resultado de una ruta con todas sus paradas resueltas, sin dar por
@@ -1717,166 +1587,138 @@ String _finishedDetail(DriverRoute route) {
   return failed == 0 ? ok : '$ok · $failed con intento fallido';
 }
 
-/// Franja sobre la tarjeta negra cuando ya no quedan paradas pendientes.
+/// Indicador discreto dentro de la tarjeta al resolver todas las paradas.
 class _FinishedBanner extends StatelessWidget {
   const _FinishedBanner(this.route);
-
   final DriverRoute route;
-
   @override
   Widget build(BuildContext context) {
-    final textTheme = Theme.of(context).textTheme;
     final perfect = route.failedCount == 0;
-
-    return TweenAnimationBuilder<double>(
-      tween: Tween(begin: 0, end: 1),
-      duration: const Duration(milliseconds: 450),
-      curve: Curves.easeOutCubic,
-      builder: (context, t, child) => Opacity(
-        opacity: t,
-        child: Transform.translate(
-          offset: Offset(0, 12 * (1 - t)),
-          child: child,
+    final color = perfect ? _Tone.greenOnDark : _Tone.amberOnDark;
+    return Row(
+      children: [
+        Icon(
+          perfect ? Icons.check_circle_outline : Icons.flag_outlined,
+          size: 16,
+          color: color,
         ),
-      ),
-      child: Container(
-        padding: const EdgeInsets.symmetric(horizontal: 22, vertical: 16),
-        color: perfect ? _Tone.green : _Tone.amber,
-        child: Row(
-          children: [
-            Icon(
-              perfect ? Icons.verified_rounded : Icons.flag_rounded,
-              size: 28,
-              color: Colors.white,
+        const SizedBox(width: 7),
+        Expanded(
+          child: Text(
+            perfect ? 'PARADAS COMPLETADAS' : 'PARADAS FINALIZADAS',
+            style: Theme.of(context).textTheme.bodySmall?.copyWith(
+              color: color,
+              fontWeight: FontWeight.w600,
             ),
-            const SizedBox(width: 14),
-            Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(
-                    perfect ? 'PARADAS COMPLETADAS' : 'PARADAS FINALIZADAS',
-                    style: _weight(
-                      textTheme.bodyMedium,
-                      FontWeight.w800,
-                      color: Colors.white,
-                    )?.copyWith(letterSpacing: 1),
-                  ),
-                  const SizedBox(height: 2),
-                  Text(
-                    perfect
-                        ? 'Todas las entregas se realizaron con éxito.'
-                        : _finishedDetail(route),
-                    style: textTheme.bodyMedium?.copyWith(
-                      color: Colors.white.withValues(alpha: 0.9),
-                    ),
-                  ),
-                ],
-              ),
-            ),
-          ],
+          ),
         ),
-      ),
+      ],
     );
   }
 }
 
-/// Confirmación al entregar la última parada de la ruta.
+/// Finalizar las visitas no implica liberar al conductor ni cerrar su jornada.
 class _FinishedDialog extends StatelessWidget {
   const _FinishedDialog(this.route);
-
   final DriverRoute route;
-
   @override
   Widget build(BuildContext context) {
     final textTheme = Theme.of(context).textTheme;
     final perfect = route.failedCount == 0;
     final total = route.stops.length;
-
+    final color = perfect ? _Tone.accent : _Tone.amber;
     return Dialog(
       backgroundColor: _Tone.card,
       surfaceTintColor: Colors.transparent,
-      shape: const RoundedRectangleBorder(),
-      insetPadding: const EdgeInsets.symmetric(horizontal: 24),
-      child: Padding(
-        padding: const EdgeInsets.fromLTRB(24, 32, 24, 16),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.stretch,
-          children: [
-            Center(
-              child: TweenAnimationBuilder<double>(
-                tween: Tween(begin: 0.3, end: 1),
-                duration: const Duration(milliseconds: 600),
-                curve: Curves.easeOutBack,
-                builder: (context, scale, child) =>
-                    Transform.scale(scale: scale, child: child),
-                child: Container(
-                  width: 84,
-                  height: 84,
-                  decoration: BoxDecoration(
-                    color: perfect ? _Tone.green : _Tone.amber,
-                    shape: BoxShape.circle,
-                  ),
-                  child: Icon(
-                    perfect ? Icons.check_rounded : Icons.flag_rounded,
-                    size: 48,
-                    color: Colors.white,
-                  ),
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+      insetPadding: const EdgeInsets.symmetric(horizontal: 24, vertical: 24),
+      child: ConstrainedBox(
+        constraints: const BoxConstraints(maxWidth: 360),
+        child: SingleChildScrollView(
+          padding: const EdgeInsets.all(24),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              Align(
+                alignment: Alignment.centerLeft,
+                child: Icon(
+                  perfect
+                      ? Icons.check_circle_outline_rounded
+                      : Icons.flag_outlined,
+                  size: 32,
+                  color: color,
                 ),
               ),
-            ),
-            const SizedBox(height: 22),
-            Text(
-              perfect ? '¡Ruta completada!' : 'Paradas finalizadas',
-              textAlign: TextAlign.center,
-              style: textTheme.headlineMedium?.copyWith(fontSize: 26),
-            ),
-            const SizedBox(height: 10),
-            Text(
-              perfect
-                  ? 'Entregaste $total de $total paradas con éxito.'
-                  : '${_finishedDetail(route)}.',
-              textAlign: TextAlign.center,
-              style: _weight(
-                textTheme.bodyLarge,
-                FontWeight.w600,
-                color: AppColors.ink,
-              ),
-            ),
-            const SizedBox(height: 6),
-            Text(
-              'Regresa al depósito para cerrar tu jornada.',
-              textAlign: TextAlign.center,
-              style: textTheme.bodyMedium?.copyWith(color: AppColors.textMuted),
-            ),
-            const SizedBox(height: 26),
-            FilledButton(
-              onPressed: () => Navigator.of(context).pop(true),
-              style: FilledButton.styleFrom(
-                backgroundColor: AppColors.primary,
-                foregroundColor: Colors.white,
-                minimumSize: const Size.fromHeight(54),
-                shape: const RoundedRectangleBorder(),
-                textStyle: _weight(
-                  textTheme.labelLarge,
-                  FontWeight.w800,
-                  size: 16,
+              const SizedBox(height: 16),
+              Text(
+                perfect ? 'Paradas completadas' : 'Paradas finalizadas',
+                style: textTheme.titleLarge?.copyWith(
+                  fontSize: 22,
+                  fontWeight: FontWeight.w600,
+                  height: 1.2,
                 ),
               ),
-              child: const Text('Volver a mis rutas'),
-            ),
-            const SizedBox(height: 6),
-            TextButton(
-              onPressed: () => Navigator.of(context).pop(false),
-              style: TextButton.styleFrom(
-                foregroundColor: AppColors.textMuted,
-                minimumSize: const Size.fromHeight(46),
-                shape: const RoundedRectangleBorder(),
+              const SizedBox(height: 8),
+              Text(
+                perfect
+                    ? 'Entregaste $total de $total paradas con éxito.'
+                    : '${_finishedDetail(route)}.',
+                style: textTheme.bodyMedium?.copyWith(color: AppColors.text),
               ),
-              child: const Text('Seguir viendo las paradas'),
-            ),
-          ],
+              const SizedBox(height: 16),
+              Row(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Icon(
+                    Icons.home_work_outlined,
+                    size: 16,
+                    color: AppColors.textMuted,
+                  ),
+                  const SizedBox(width: 8),
+                  Expanded(
+                    child: Text(
+                      route.returnedAt == null
+                          ? 'Regresa al depósito y confirma tu llegada.'
+                          : 'Regreso al depósito confirmado.',
+                      style: textTheme.bodySmall?.copyWith(
+                        color: AppColors.text,
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 24),
+              FilledButton(
+                onPressed: () => Navigator.of(context).pop(true),
+                style: FilledButton.styleFrom(
+                  backgroundColor: AppColors.primary,
+                  foregroundColor: Colors.white,
+                  minimumSize: const Size.fromHeight(48),
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(10),
+                  ),
+                  textStyle: textTheme.bodyMedium?.copyWith(
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
+                child: const Text('Volver a mis rutas'),
+              ),
+              const SizedBox(height: 4),
+              TextButton(
+                onPressed: () => Navigator.of(context).pop(false),
+                style: TextButton.styleFrom(
+                  foregroundColor: AppColors.text,
+                  minimumSize: const Size.fromHeight(44),
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(10),
+                  ),
+                  textStyle: textTheme.bodyMedium,
+                ),
+                child: const Text('Ver paradas'),
+              ),
+            ],
+          ),
         ),
       ),
     );
@@ -1885,27 +1727,61 @@ class _FinishedDialog extends StatelessWidget {
 
 /// Aviso de la pantalla, por ejemplo cuando una recarga falla.
 class _Notice extends StatelessWidget {
-  const _Notice(this.text);
+  const _Notice(
+    this.text, {
+    this.detail,
+    this.onRetry,
+    this.retryEnabled = true,
+  });
 
   final String text;
+  final String? detail;
+  final VoidCallback? onRetry;
+  final bool retryEnabled;
 
   @override
   Widget build(BuildContext context) {
     return Container(
       padding: const EdgeInsets.all(14),
-      decoration: BoxDecoration(color: _Tone.amberSoft),
+      decoration: BoxDecoration(
+        color: _Tone.amberSoft,
+        borderRadius: BorderRadius.circular(12),
+      ),
       child: Row(
         children: [
           const Icon(Icons.info_rounded, size: 20, color: _Tone.amber),
           const SizedBox(width: 12),
           Expanded(
-            child: Text(
-              text,
-              style: Theme.of(
-                context,
-              ).textTheme.bodyMedium?.copyWith(color: AppColors.ink),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  text,
+                  style: Theme.of(
+                    context,
+                  ).textTheme.bodyMedium?.copyWith(color: AppColors.ink),
+                ),
+                if (detail case final message?) ...[
+                  const SizedBox(height: 4),
+                  Text(
+                    message,
+                    style: Theme.of(
+                      context,
+                    ).textTheme.bodySmall?.copyWith(color: AppColors.text),
+                  ),
+                ],
+              ],
             ),
           ),
+          if (onRetry != null) ...[
+            const SizedBox(width: 4),
+            IconButton(
+              tooltip: 'Reintentar',
+              onPressed: retryEnabled ? onRetry : null,
+              icon: const Icon(Icons.refresh_rounded),
+              color: AppColors.ink,
+            ),
+          ],
         ],
       ),
     );
@@ -1943,7 +1819,7 @@ class _MessageView extends StatelessWidget {
             height: 80,
             decoration: const BoxDecoration(
               color: _Tone.page,
-              shape: BoxShape.circle,
+              shape: BoxShape.rectangle,
             ),
             child: Icon(icon, size: 38, color: AppColors.ink),
           ),

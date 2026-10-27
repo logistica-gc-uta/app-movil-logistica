@@ -1,0 +1,18 @@
+  status   | return_confirmed | isAvailable | total | delivered | resolved | delivered_percent 
+-----------+------------------+-------------+-------+-----------+----------+-------------------
+ COMPLETED | t                | t           |     4 |         3 |        4 |                75
+(1 row)
+
+ sequence |  outcome   | commercial_status | failed_attempts 
+----------+------------+-------------------+-----------------
+        1 | SUCCESSFUL | DELIVERED         |               0
+        2 | SUCCESSFUL | DELIVERED         |               0
+        3 | SUCCESSFUL | DELIVERED         |               0
+        4 | FAILED     | ASSIGNED          |               1
+(4 rows)
+
+ reservations | released 
+--------------+----------
+            1 |        1
+(1 row)
+
