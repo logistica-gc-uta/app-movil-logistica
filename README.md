@@ -114,6 +114,8 @@ Para probarla hace falta una ruta asignada al chofer de prueba para el día de h
 
 ### Bienvenida y colores
 
+La vista del chofer usa un resumen compacto de progreso y una sola acción para la parada en turno. En la ruta iniciada, las tarjetas tienen esquinas suavizadas y la parada actual se destaca en verde claro. Las visitas pendientes y atendidas se muestran en filas reducidas; el detalle de las paradas también puede consultarse desde el icono de lista de la tarjeta de ruta. Los avisos de conexión, intentos fallidos y retorno pendiente permanecen visibles cuando corresponden.
+
 - **Bienvenida:** la primera vez que se abre la app se muestra una pantalla de bienvenida. Al pulsar «Continuar» se guarda en el teléfono que ya se vio y no vuelve a aparecer, ni siquiera tras cerrar sesión. Para verla de nuevo hay que borrar los datos de la app (Ajustes → Apps → Almacenamiento → Borrar datos). Para revisar su diseño mientras desarrollas, ejecuta la app con `flutter run --dart-define=ALWAYS_SHOW_WELCOME=true` y aparecerá en cada arranque.
 - **Invertir colores:** el botón «Invertir» de la esquina superior derecha intercambia el blanco y el negro de la bienvenida y del inicio de sesión. La elección se guarda en el teléfono.
 
@@ -168,6 +170,8 @@ Las reglas de análisis están en `analysis_options.yaml`. Las pruebas usan un s
 La prueba adicional `integration_test/daily_route_test.dart` usa Android, NestJS y PostgreSQL reales con una base aislada y datos ficticios. Ver [evidencia y reproducción de la issue #3](docs/evidence/issue-3/README.md).
 
 El inicio explícito, la repetición idempotente y la ruta completada con retorno pendiente se validan con `integration_test/start_route_test.dart`. Ver [evidencia y reproducción de la issue #4](docs/evidence/issue-4/README.md).
+
+El avance muestra por separado el porcentaje de entregas exitosas y las visitas resueltas. Si se pierde la respuesta de una entrega, se recupera el estado mediante GET sin reenviar la mutación; si también falla la consulta, se conserva la ruta y se bloquean cambios hasta actualizar. Se puede usar el icono «Actualizar estado», deslizar para recargar o volver a la app. La recuperación en primer plano requiere actualización manual. Ver [pruebas y reproducción de la issue #5](docs/evidence/issue-5/README.md), incluidos los contratos REST de fallo/retorno cuya interfaz corresponde a #8.
 
 ## Flujo de trabajo
 

@@ -6,8 +6,8 @@ import { resolve, join } from 'node:path';
 import { pathToFileURL } from 'node:url';
 
 const [action, backendPath, database] = process.argv.slice(2);
-if (!backendPath || !/^mobile_issue[34]_[a-z0-9_]+$/.test(database ?? '')) {
-  throw new Error('Provide backend path and a database named mobile_issue3_<unique suffix> or mobile_issue4_<unique suffix>');
+if (!backendPath || !/^mobile_issue[345]_[a-z0-9_]+$/.test(database ?? '')) {
+  throw new Error('Provide backend path and a database named mobile_issue3_<unique suffix>, mobile_issue4_<unique suffix> or mobile_issue5_<unique suffix>');
 }
 const backend = resolve(backendPath);
 const docker = (args, input) => execFileSync('docker', args, { input, stdio: ['pipe', 'pipe', 'pipe'] });

@@ -168,6 +168,73 @@ void main() {
     expect(authService.apiClient.token, isNull);
   });
 
+  for (final expiresOnPatch in [false, true]) {
+    testWidgets(
+      '401 al ${expiresOnPatch ? 'entregar' : 'recuperar primer plano'} borra sesión',
+      (tester) async {
+        var expired = false;
+        tester.view.physicalSize = const Size(1080, 2400);
+        tester.view.devicePixelRatio = 2.625;
+        addTearDown(tester.view.reset);
+        final authService = await openApp(
+          tester,
+          server: (request) async {
+            if (request.url.path.endsWith('/auth/login')) return loginResponse;
+            if ((expired && request.method == 'GET') ||
+                request.method == 'PATCH') {
+              return http.Response('{}', 401);
+            }
+            return http.Response(
+              jsonEncode([
+                {
+                  'id': 'r1',
+                  'status': 'IN_PROGRESS',
+                  'zone': {'name': 'DEMO', 'code': 'DEMO'},
+                  'orders': [
+                    {
+                      'id': 'o1',
+                      'deliveryAddress': 'Calle DEMO',
+                      'status': 'IN_TRANSIT',
+                      'stopOrder': 1,
+                    },
+                  ],
+                },
+              ]),
+              200,
+            );
+          },
+        );
+        await login(tester);
+        if (expiresOnPatch) {
+          await tester.tap(find.text('Continuar ruta'));
+          await tester.pumpAndSettle();
+          await tester.ensureVisible(
+            find.widgetWithText(FilledButton, 'Entregado'),
+          );
+          await tester.pumpAndSettle();
+          await tester.tap(find.widgetWithText(FilledButton, 'Entregado'));
+        } else {
+          expired = true;
+          tester.binding.handleAppLifecycleStateChanged(
+            AppLifecycleState.paused,
+          );
+          tester.binding.handleAppLifecycleStateChanged(
+            AppLifecycleState.resumed,
+          );
+        }
+        await tester.pumpAndSettle();
+        expect(find.text('INICIAR SESIÓN'), findsOneWidget);
+        expect(
+          find.text('Tu sesión caducó. Inicia sesión de nuevo.'),
+          findsOneWidget,
+        );
+        expect(find.text('Pedido actualizado.'), findsNothing);
+        expect(authService.apiClient.token, isNull);
+        expect(await SessionStorage().read(), isNull);
+      },
+    );
+  }
+
   testWidgets('401 al iniciar ruta borra la sesión y vuelve al login', (
     tester,
   ) async {

@@ -123,6 +123,11 @@ class DriverRoute {
   int get deliveredCount => stops.where((stop) => stop.isDelivered).length;
 
   int get failedCount => stops.where((stop) => stop.isFailed).length;
+
+  int get resolvedCount => deliveredCount + failedCount;
+
+  double get deliveredFraction =>
+      stops.isEmpty ? 0 : deliveredCount / stops.length;
 }
 
 /// Ordena por `stopOrder` ascendente, las paradas sin posición al final y,

@@ -97,6 +97,271 @@ void main() {
     await tester.pumpAndSettle();
   }
 
+  testWidgets('3 éxitos y un fallo muestran 75 % y 4/4 visitas resueltas', (
+    tester,
+  ) async {
+    final data =
+        jsonDecode(
+              routesJson(routeStatus: 'COMPLETED', orderStatus: 'DELIVERED'),
+            )
+            as List;
+    data.first['orders'] = [
+      for (var i = 1; i <= 4; i++)
+        {
+          'id': 'o$i',
+          'deliveryAddress': 'DEMO $i',
+          'stopOrder': i,
+          'status': i == 4 ? 'ASSIGNED' : 'DELIVERED',
+        },
+    ];
+    data.first['stops'] = [
+      for (var i = 1; i <= 4; i++)
+        {'orderId': 'o$i', 'outcome': i == 4 ? 'FAILED' : 'SUCCESSFUL'},
+    ];
+    await openPage(tester, (_) async => http.Response(jsonEncode(data), 200));
+    expect(
+      find.text('3 de 4 entregados · 1 con intento fallido'),
+      findsOneWidget,
+    );
+    expect(find.text('75 % entregado · 4/4 visitas resueltas'), findsOneWidget);
+    expect(find.textContaining('Sigues ocupado'), findsOneWidget);
+    await enterRoute(tester);
+    expect(find.text('75 % entregado · 4/4 visitas resueltas'), findsOneWidget);
+    expect(find.text('Intento fallido'), findsOneWidget);
+  });
+
+  testWidgets('ruta vacía muestra 0 % sin dividir por cero', (tester) async {
+    final data =
+        jsonDecode(routesJson(routeStatus: 'ASSIGNED', orderStatus: 'ASSIGNED'))
+            as List;
+    data.first['orders'] = [];
+    await openPage(tester, (_) async => http.Response(jsonEncode(data), 200));
+    expect(find.text('0 % entregado · 0/0 visitas resueltas'), findsOneWidget);
+  });
+
+  for (final persisted in [false, true]) {
+    testWidgets(
+      'timeout de entrega recupera GET (persistida=$persisted), sin reenvío ni éxito falso',
+      (tester) async {
+        var changed = false;
+        await openPage(tester, (request) async {
+          if (request.method == 'PATCH') {
+            changed = true;
+            throw TimeoutException('Respuesta perdida');
+          }
+          return http.Response(
+            routesJson(
+              routeStatus: 'IN_PROGRESS',
+              orderStatus: changed && persisted ? 'DELIVERED' : 'IN_TRANSIT',
+            ),
+            200,
+          );
+        });
+        await enterRoute(tester);
+        await tapVisible(tester, find.text('Entregado'));
+        await tester.pumpAndSettle();
+        expect(requests.where((r) => r.method == 'PATCH'), hasLength(1));
+        expect(requests.where((r) => r.method == 'GET'), hasLength(2));
+        expect(find.text('Pedido actualizado.'), findsNothing);
+        // Un GET autorizado puede confirmar la entrega que perdió su respuesta.
+        expect(
+          find.text('Entregado con éxito'),
+          persisted ? findsOneWidget : findsNothing,
+        );
+        expect(
+          find.text('${persisted ? 1 : 0} de 2 entregados'),
+          findsOneWidget,
+        );
+      },
+    );
+  }
+
+  testWidgets(
+    'sin red conserva la ruta, bloquea reenvío y recupera con GET manual',
+    (tester) async {
+      var changed = false;
+      var online = true;
+      await openPage(tester, (request) async {
+        if (request.method == 'PATCH') {
+          changed = true;
+          online = false;
+        }
+        if (!online) throw http.ClientException('Sin red');
+        return http.Response(
+          routesJson(
+            routeStatus: 'IN_PROGRESS',
+            orderStatus: changed ? 'DELIVERED' : 'IN_TRANSIT',
+          ),
+          200,
+        );
+      });
+      await enterRoute(tester);
+      await tapVisible(tester, find.text('Entregado'));
+      await tester.pumpAndSettle();
+      expect(find.text('Calle Primera 100'), findsOneWidget);
+      expect(find.text('0 de 2 entregados'), findsOneWidget);
+      // La causa y la instrucción comparten un único aviso de recuperación.
+      expect(find.byIcon(Icons.info_rounded), findsOneWidget);
+      expect(find.byTooltip('Reintentar'), findsOneWidget);
+      expect(
+        tester
+            .widget<FilledButton>(
+              find.widgetWithText(FilledButton, 'Entregado'),
+            )
+            .onPressed,
+        isNull,
+      );
+      online = true;
+      await tapVisible(tester, find.byTooltip('Reintentar'));
+      await tester.pumpAndSettle();
+      expect(find.text('1 de 2 entregados'), findsOneWidget);
+      expect(find.byTooltip('Actualizar estado'), findsNothing);
+      expect(find.byTooltip('Reintentar'), findsNothing);
+      expect(requests.where((r) => r.method == 'PATCH'), hasLength(1));
+    },
+  );
+
+  testWidgets('al regresar a primer plano recupera GET sin mutaciones', (
+    tester,
+  ) async {
+    var status = 'ASSIGNED';
+    await openPage(
+      tester,
+      (_) async => http.Response(
+        routesJson(routeStatus: 'IN_PROGRESS', orderStatus: status),
+        200,
+      ),
+    );
+    tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.paused);
+    status = 'DELIVERED';
+    tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.resumed);
+    await tester.pumpAndSettle();
+    expect(find.text('1 de 2 entregados'), findsOneWidget);
+    expect(requests.every((r) => r.method == 'GET'), isTrue);
+    expect(requests, hasLength(2));
+  });
+
+  for (final code in [400, 409]) {
+    testWidgets(
+      'rechazo $code conserva ruta, consulta estado y no confirma éxito',
+      (tester) async {
+        await openPage(
+          tester,
+          (r) async => r.method == 'PATCH'
+              ? http.Response('{}', code)
+              : http.Response(
+                  routesJson(
+                    routeStatus: 'IN_PROGRESS',
+                    orderStatus: 'IN_TRANSIT',
+                  ),
+                  200,
+                ),
+        );
+        await enterRoute(tester);
+        await tapVisible(tester, find.text('Entregado'));
+        await tester.pumpAndSettle();
+        expect(find.text('0 de 2 entregados'), findsOneWidget);
+        expect(find.text('Pedido actualizado.'), findsNothing);
+        expect(requests.where((r) => r.method == 'PATCH'), hasLength(1));
+        expect(requests.where((r) => r.method == 'GET'), hasLength(2));
+      },
+    );
+  }
+
+  testWidgets('GET con formato inválido conserva lista y permite recuperar', (
+    tester,
+  ) async {
+    var invalid = false;
+    await openPage(
+      tester,
+      (_) async => http.Response(
+        invalid
+            ? '{}'
+            : routesJson(routeStatus: 'IN_PROGRESS', orderStatus: 'ASSIGNED'),
+        200,
+      ),
+    );
+    invalid = true;
+    tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.paused);
+    tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.resumed);
+    await tester.pumpAndSettle();
+    expect(find.text('Centro'), findsOneWidget);
+    expect(find.textContaining('rutas inválidas'), findsOneWidget);
+    invalid = false;
+    await tapVisible(tester, find.byTooltip('Actualizar estado'));
+    await tester.pumpAndSettle();
+    expect(find.byTooltip('Actualizar estado'), findsNothing);
+  });
+
+  testWidgets('GET anterior al PATCH no revierte el progreso confirmado', (
+    tester,
+  ) async {
+    final stale = Completer<http.Response>();
+    var gets = 0;
+    var changed = false;
+    await openPage(tester, (request) async {
+      if (request.method == 'PATCH') {
+        changed = true;
+        return http.Response('{}', 200);
+      }
+      gets++;
+      if (gets == 2) return stale.future;
+      return http.Response(
+        routesJson(
+          routeStatus: 'IN_PROGRESS',
+          orderStatus: changed ? 'DELIVERED' : 'IN_TRANSIT',
+        ),
+        200,
+      );
+    });
+    await enterRoute(tester);
+    tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.paused);
+    tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.resumed);
+    await tester.pump();
+    await tapVisible(tester, find.widgetWithText(FilledButton, 'Entregado'));
+    await tester.pumpAndSettle();
+    expect(find.text('1 de 2 entregados'), findsOneWidget);
+    stale.complete(
+      http.Response(
+        routesJson(routeStatus: 'IN_PROGRESS', orderStatus: 'IN_TRANSIT'),
+        200,
+      ),
+    );
+    await tester.pumpAndSettle();
+    expect(find.text('1 de 2 entregados'), findsOneWidget);
+    expect(requests.where((r) => r.method == 'PATCH'), hasLength(1));
+  });
+
+  testWidgets(
+    'retomar durante PATCH pendiente no inicia GET ni repite acción',
+    (tester) async {
+      final pending = Completer<http.Response>();
+      await openPage(
+        tester,
+        (request) async => request.method == 'PATCH'
+            ? pending.future
+            : http.Response(
+                routesJson(
+                  routeStatus: 'IN_PROGRESS',
+                  orderStatus: 'IN_TRANSIT',
+                ),
+                200,
+              ),
+      );
+      await enterRoute(tester);
+      await tapVisible(tester, find.widgetWithText(FilledButton, 'Entregado'));
+      await tester.pump();
+      tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.paused);
+      tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.resumed);
+      await tester.pump();
+      expect(requests.where((r) => r.method == 'GET'), hasLength(1));
+      expect(requests.where((r) => r.method == 'PATCH'), hasLength(1));
+      pending.complete(http.Response('{}', 409));
+      await tester.pumpAndSettle();
+      expect(requests.where((r) => r.method == 'GET'), hasLength(2));
+    },
+  );
+
   testWidgets('sin rutas muestra el aviso de día libre', (tester) async {
     await openPage(tester, (_) async => http.Response('[]', 200));
 
@@ -179,14 +444,14 @@ void main() {
       expect(find.text('Iniciar ruta'), findsNothing);
       // Solo la parada 1 está en turno; la 2 espera.
       expect(find.text('En camino'), findsOneWidget);
-      expect(find.text('Disponible al terminar la parada 1'), findsOneWidget);
+      expect(find.byIcon(Icons.lock_outline), findsOneWidget);
       expect(
         tester.getTopLeft(find.text('Calle Primera 100')).dy,
         lessThan(tester.getTopLeft(find.text('Av. Segunda 200')).dy),
       );
       expect(
         find.text('Ruta en curso. Atiende las paradas en orden, una a la vez.'),
-        findsOneWidget,
+        findsNothing,
       );
     },
   );
@@ -459,10 +724,7 @@ void main() {
       ),
     );
 
-    expect(
-      find.text('Inicia la ruta para poder actualizar las entregas.'),
-      findsOneWidget,
-    );
+    expect(find.text('Iniciar ruta'), findsOneWidget);
     expect(find.text('En camino'), findsNothing);
   });
 
@@ -757,7 +1019,7 @@ void main() {
       ];
       return http.Response(jsonEncode(data), 200);
     });
-    expect(find.text('¡Ruta completada!'), findsNothing);
+    expect(find.text('Paradas completadas'), findsNothing);
     await enterRoute(tester);
     await tapVisible(tester, find.text('Entregado'));
   }
@@ -781,7 +1043,7 @@ void main() {
   ) async {
     await openLastStop(tester, firstOutcome: 'SUCCESSFUL');
     await tester.pumpAndSettle();
-    expect(find.text('¡Ruta completada!'), findsOneWidget);
+    expect(find.text('Paradas completadas'), findsOneWidget);
     expect(find.text('Entregaste 2 de 2 paradas con éxito.'), findsOneWidget);
     await tester.tap(find.text('Volver a mis rutas'));
     await tester.pumpAndSettle();
@@ -795,13 +1057,13 @@ void main() {
   testWidgets('con un intento fallido no anuncia éxito total', (tester) async {
     await openLastStop(tester, firstOutcome: 'FAILED');
     await tester.pumpAndSettle();
-    expect(find.text('¡Ruta completada!'), findsNothing);
+    expect(find.text('Paradas completadas'), findsNothing);
     expect(find.text('Paradas finalizadas'), findsOneWidget);
     expect(
       find.text('1 entrega exitosa · 1 con intento fallido.'),
       findsOneWidget,
     );
-    await tester.tap(find.text('Seguir viendo las paradas'));
+    await tester.tap(find.text('Ver paradas'));
     await tester.pumpAndSettle();
     expect(find.text('Intento fallido'), findsOneWidget);
     expect(find.text('Hola, Carlos Chofer'), findsNothing);

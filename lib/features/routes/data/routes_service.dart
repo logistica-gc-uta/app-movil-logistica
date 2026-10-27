@@ -31,10 +31,16 @@ class RoutesService {
     final data = await _call(
       () => apiClient.get('/drivers/me/routes?date=$date'),
     );
-    return (data as List)
-        .cast<Map<String, dynamic>>()
-        .map(DriverRoute.fromJson)
-        .toList();
+    try {
+      return (data as List)
+          .cast<Map<String, dynamic>>()
+          .map(DriverRoute.fromJson)
+          .toList();
+    } on TypeError {
+      throw const RoutesException(
+        'El servidor devolvió rutas inválidas. Actualiza el estado.',
+      );
+    }
   }
 
   Future<void> markInTransit(String orderId) =>
