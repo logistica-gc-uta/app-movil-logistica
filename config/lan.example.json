@@ -1,0 +1,5 @@
+{
+  "APP_ENV": "lan",
+  "API_BASE_URL": "http://<IP_DEL_PC>:3000/api/v1",
+  "ALLOW_INSECURE_HTTP": "true"
+}

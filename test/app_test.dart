@@ -30,6 +30,7 @@ void main() {
   Future<AuthService> openApp(
     WidgetTester tester, {
     Future<http.Response> Function(http.Request)? server,
+    String? buildLabel,
   }) async {
     final authService = AuthService(
       apiClient: ApiClient(
@@ -47,7 +48,11 @@ void main() {
       storage: SessionStorage(),
     );
     await tester.pumpWidget(
-      LogisticaApp(key: UniqueKey(), authService: authService),
+      LogisticaApp(
+        key: UniqueKey(),
+        authService: authService,
+        buildLabel: buildLabel,
+      ),
     );
     await tester.pumpAndSettle();
     return authService;
@@ -78,6 +83,25 @@ void main() {
 
     await openApp(tester);
     expect(find.text('Normal'), findsOneWidget);
+  });
+
+  testWidgets('la etiqueta de la build se ve en el login y no en Mi Ruta', (
+    tester,
+  ) async {
+    await openApp(tester, buildLabel: 'v1.0.0+2 · staging · 1a2b3c4');
+    expect(find.text('v1.0.0+2 · staging · 1a2b3c4'), findsOneWidget);
+
+    await login(tester);
+
+    expect(find.text('Hola, Carlos Chofer'), findsOneWidget);
+    expect(find.text('v1.0.0+2 · staging · 1a2b3c4'), findsNothing);
+  });
+
+  testWidgets('sin etiqueta de build (desarrollo) no se muestra nada', (
+    tester,
+  ) async {
+    await openApp(tester);
+    expect(find.textContaining(' · '), findsNothing);
   });
 
   testWidgets('con sesión guardada sin bienvenida vista, la muestra antes', (
