@@ -2,7 +2,7 @@
 // node tool/daily_route_fixture.mjs setup|serve|cleanup <backend-path> <owned-db-name>
 import { execFileSync } from 'node:child_process';
 import { createRequire } from 'node:module';
-import { resolve, join } from 'node:path';
+import { dirname, resolve, join } from 'node:path';
 import { pathToFileURL } from 'node:url';
 
 const [action, backendPath, database] = process.argv.slice(2);
@@ -10,25 +10,32 @@ if (!backendPath || !/^mobile_issue[3456]_[a-z0-9_]+$/.test(database ?? '')) {
   throw new Error('Provide backend path and a database named mobile_issue3_<unique suffix>, mobile_issue4_, mobile_issue5_ or mobile_issue6_<unique suffix>');
 }
 const backend = resolve(backendPath);
+const require = createRequire(join(backend, 'package.json'));
+const fixtureDatabaseUrl = () => {
+  require('dotenv').config({ path: join(backend, '.env'), quiet: true });
+  const url = new URL(process.env.DATABASE_URL);
+  url.pathname = `/${database}`;
+  return url.toString();
+};
 const docker = (args, input) => execFileSync('docker', args, { input, stdio: ['pipe', 'pipe', 'pipe'] });
 const pg = (args, input) => docker(['exec', '-i', 'logistica_postgres', ...args], input);
 if (action === 'cleanup') {
   pg(['dropdb', '-U', 'logistica_user', '--if-exists', database]);
   console.log('Owned fixture database removed.');
 } else if (action === 'serve') {
-  const require = createRequire(join(backend, 'package.json'));
-  require('dotenv').config({ path: join(backend, '.env'), quiet: true });
-  const url = new URL(process.env.DATABASE_URL);
-  url.pathname = `/${database}`;
-  process.env.DATABASE_URL = url.toString();
+  process.env.DATABASE_URL = fixtureDatabaseUrl();
   process.env.PORT = '3003';
   process.chdir(backend);
   await import(pathToFileURL(join(backend, 'dist/main.js')).href);
 } else if (action === 'setup') {
-  const schema = pg(['pg_dump', '-U', 'logistica_user', '-d', 'logistica_db', '--schema-only', '--no-owner', '--no-privileges']);
+  // The schema comes from the backend's current contract, not from a copy of
+  // the development database, which may lag behind pending migrations.
   pg(['createdb', '-U', 'logistica_user', database]);
-  pg(['psql', '-U', 'logistica_user', '-d', database, '-v', 'ON_ERROR_STOP=1'], schema);
-  const require = createRequire(join(backend, 'package.json'));
+  const prismaBin = join(dirname(require.resolve('prisma/package.json')), 'dist/prisma.js');
+  execFileSync(process.execPath, [prismaBin, 'db', 'init', '--db', fixtureDatabaseUrl()], {
+    cwd: backend,
+    stdio: ['ignore', 'pipe', 'pipe'],
+  });
   const password = require('bcryptjs').hashSync('fixture-only-123', 10);
   const date = new Date(Date.now() - 5 * 3600000).toISOString().slice(0, 10);
   const route = 'f8541a2e-d9cb-4b09-8d9d-5c21e527cb7c';
