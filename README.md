@@ -2,7 +2,7 @@
 
 App móvil en Flutter (Android) para el chofer del sistema de logística y entrega de pedidos. Consume la API del [backend](https://github.com/logistica-gc-uta/backend).
 
-**Estado actual:** inicio de sesión del chofer, pantalla «Mi Ruta del Día» e «Iniciar ruta» implementados. El formulario de entregas fallidas y la confirmación de regreso al depósito (issue #8) siguen pendientes.
+**Estado actual:** inicio de sesión del chofer, pantalla «Mi Ruta del Día» e «Iniciar ruta» implementados, con APK de demostración identificado por commit y conexión HTTPS obligatoria en release (ver [APK de demostración](docs/apk-demo.md)). El formulario de entregas fallidas y la confirmación de regreso al depósito (issue #8) siguen pendientes.
 
 ## Requisitos
 
@@ -74,6 +74,10 @@ El backend local escucha en el puerto `3000` con el prefijo `/api/v1`.
 | Teléfono físico | `http://<IP_DEL_PC>:3000/api/v1` | `flutter run --dart-define=API_BASE_URL=http://<IP_DEL_PC>:3000/api/v1` |
 | Servidor remoto | `https://<host>/api/v1` | `flutter run --dart-define=API_BASE_URL=https://<host>/api/v1` |
 
+En lugar de escribir el `--dart-define` cada vez, puedes usar los archivos de entorno de [`config/`](config/): copia el `.example.json` correspondiente y ejecuta, por ejemplo, `flutter run --dart-define-from-file=config/lan.json`. Los `config/*.json` no se suben al repositorio.
+
+Las builds **release** solo se conectan por HTTPS. Para compilar una release que use `http://` (emulador o red local) hay que añadir `ALLOW_INSECURE_HTTP=true`; si no, la app muestra un aviso de configuración y no pide la contraseña.
+
 **No uses `localhost` ni `127.0.0.1`.** Dentro del emulador o del teléfono, `localhost` es el propio dispositivo, no tu PC.
 
 - **Emulador:** `10.0.2.2` es la dirección especial con la que el emulador Android llega al PC donde corre.
@@ -131,6 +135,15 @@ La vista del chofer usa un resumen compacto de progreso y una sola acción para 
 
 4. Inicia sesión con los usuarios del *seed* (sección «Credenciales por Defecto» del README del backend): uno con rol `DRIVER` debe entrar; uno `ADMIN` o `CLIENT` debe ser rechazado.
 
+## APK de demostración
+
+```powershell
+Copy-Item config/staging.example.json config/staging.json   # y completa la URL
+.	ooluild_demo_apk.ps1 -Environment staging
+```
+
+Genera en `build/demo/` un APK release nombrado con versión, entorno y commit, su SHA-256 y un archivo con los datos de la build. La app muestra esa identificación en la bienvenida y el login. La configuración por entorno, la firma, la instalación, el guion de la demo, el plan alternativo sin conexión y las limitaciones están en [docs/apk-demo.md](docs/apk-demo.md). La evidencia de la issue #6 está en [docs/evidence/issue-6](docs/evidence/issue-6/README.md).
+
 ## Estructura
 
 ```
@@ -138,7 +151,7 @@ lib/
 ├── main.dart                  Punto de arranque: crea los servicios reales
 ├── app.dart                   Widget raíz: bienvenida, login o zona privada, y selector de colores
 ├── core/                      Código compartido por toda la app
-│   ├── config/                AppConfig: URL base de la API
+│   ├── config/                AppConfig (URL de la API, entorno, build) y ConfigErrorApp
 │   ├── network/               ApiClient (cliente HTTP) y ApiException
 │   ├── theme/                 Tema visual, BrandColors y BrandStorage
 │   └── widgets/               BrandWordmark (marca) y PrimaryButton
@@ -150,6 +163,8 @@ lib/
         ├── data/              DriverRoute (ruta y paradas) y RoutesService
         └── presentation/      MyRoutePage
 test/                          Pruebas; replica la estructura de lib/
+config/                        Ejemplos de configuración por entorno (*.example.json)
+tool/                          build_demo_apk.ps1 y fixture aislada para integración
 assets/fonts/                  Tipografía Inter (licencia OFL)
 ```
 

@@ -45,12 +45,17 @@ class LogisticaApp extends StatefulWidget {
     required this.authService,
     OnboardingStorage? onboardingStorage,
     BrandStorage? brandStorage,
+    this.buildLabel,
   }) : onboardingStorage = onboardingStorage ?? OnboardingStorage(),
        brandStorage = brandStorage ?? BrandStorage();
 
   final AuthService authService;
   final OnboardingStorage onboardingStorage;
   final BrandStorage brandStorage;
+
+  /// Versión, entorno y commit de la build, para identificarla en capturas
+  /// de la demo. Null en desarrollo.
+  final String? buildLabel;
 
   @override
   State<LogisticaApp> createState() => _LogisticaAppState();
@@ -189,9 +194,20 @@ class _LogisticaAppState extends State<LogisticaApp> {
         if (_isRestoring || _currentScreen() == _Screen.route) {
           return child!;
         }
+        final buildLabel = widget.buildLabel;
         return Stack(
           children: [
             child!,
+            if (buildLabel != null)
+              SafeArea(
+                child: Align(
+                  alignment: Alignment.topLeft,
+                  child: Padding(
+                    padding: const EdgeInsets.only(top: 10, left: 12),
+                    child: _BuildLabel(buildLabel),
+                  ),
+                ),
+              ),
             SafeArea(
               child: Align(
                 alignment: Alignment.topRight,
@@ -207,6 +223,34 @@ class _LogisticaAppState extends State<LogisticaApp> {
           ],
         );
       },
+    );
+  }
+}
+
+/// Versión, entorno y commit de la build en una pastilla discreta, legible
+/// sobre cualquier fondo. Solo aparece en builds de demostración.
+class _BuildLabel extends StatelessWidget {
+  const _BuildLabel(this.label);
+
+  final String label;
+
+  @override
+  Widget build(BuildContext context) {
+    return DecoratedBox(
+      decoration: BoxDecoration(
+        color: Colors.white.withValues(alpha: 0.85),
+        borderRadius: AppRadius.button,
+      ),
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+        child: Text(
+          label,
+          style: Theme.of(context).textTheme.labelSmall?.copyWith(
+            color: AppColors.ink,
+            fontFeatures: const [FontFeature.tabularFigures()],
+          ),
+        ),
+      ),
     );
   }
 }

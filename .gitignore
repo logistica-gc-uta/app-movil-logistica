@@ -51,3 +51,7 @@ app.*.map.json
 
 #Reportes temporales de Gradle
 /android/build/
+
+# Configuración de cada entorno (URL de la API). Solo se suben los ejemplos.
+/config/*.json
+!/config/*.example.json

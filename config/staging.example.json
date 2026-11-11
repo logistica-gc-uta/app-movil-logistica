@@ -1,0 +1,5 @@
+{
+  "APP_ENV": "staging",
+  "API_BASE_URL": "https://<dominio-api-staging>/api/v1",
+  "ALLOW_INSECURE_HTTP": "false"
+}
