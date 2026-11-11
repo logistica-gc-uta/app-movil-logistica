@@ -46,7 +46,7 @@ El script:
    - `….apk.sha256`, con el hash para comprobar el archivo.
    - `….txt`, con la versión, el entorno, el host de la API, el commit completo, la fecha UTC, la versión de Flutter, el tipo de firma y el SHA-256.
 
-La app muestra la misma identificación (`v1.0.0+1 · staging · 104e851`) en la esquina superior izquierda de la bienvenida y del inicio de sesión, para que cada captura diga qué build se usó. En las builds de desarrollo (`flutter run`) no aparece.
+La app muestra la misma identificación (por ejemplo `v1.0.0+1 · staging · 1a2b3c4`) en la esquina superior izquierda de la bienvenida y del inicio de sesión, para que cada captura diga qué build se usó. En las builds de desarrollo (`flutter run`) no aparece.
 
 Requisitos: Flutter 3.41.3 (Dart 3.11.1), JDK 17 y Android SDK 36. Ver [README](../README.md#requisitos).
 

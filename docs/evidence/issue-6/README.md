@@ -26,10 +26,12 @@ Resultado: **PASS** en `Medium_Phone_API_36.1` (Android 16, API 36, x86_64). No 
 |---|---|
 | Archivo | `speedrun-1.0.0-b1-emulator-104e851.apk` (47,4 MB, release) |
 | SHA-256 | `f9e6545f3cae4aa6b0c1eb7dae8feb6c70ec7f42805ca01e8ae947a2ee2d60bd` |
-| Commit móvil | `104e851ac1d0cf78ee917a5f927990fbd64dcb99` |
+| Commit móvil | `1878964280d5a7c1ae54196c96cad1db8dcc92db` |
 | Backend | `2e196400f682cad5107d7d6bc706b50efee1a1e7` (NestJS + PostgreSQL reales, fixture aislada) |
 | Flutter | 3.41.3, Dart 3.11.1 |
 | Firma | clave debug (no hay `android/key.properties`) |
+
+El nombre del APK y las capturas muestran `104e851`: es el mismo código que `1878964` (árbol `1bd1276`). Solo se corrigió el mensaje del commit antes de subirlo.
 
 Flujo verificado con datos ficticios (`owner@fixture.invalid`): bienvenida con la identificación de la build, login `DRIVER`, Mi Ruta del Día con la ruta asignada, **Iniciar ruta** confirmada por el servidor, **En camino** y **Entregado** en la primera parada (25 % entregado, 1/4 visitas resueltas). PostgreSQL confirma el mismo estado: [postgresql-result.txt](postgresql-result.txt).
 
