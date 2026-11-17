@@ -1,0 +1,23 @@
+  status   | completion_recorded | return_confirmed | driver_available | stops | delivered | failed | resolved 
+-----------+---------------------+------------------+------------------+-------+-----------+--------+----------
+ COMPLETED | t                   | t                | t                |     4 |         3 |      1 |        4
+(1 row)
+
+ sequence |  outcome   | commercial_status | admin_review | attempts |  failure_reason  
+----------+------------+-------------------+--------------+----------+------------------
+        1 | SUCCESSFUL | DELIVERED         | f            |        1 | 
+        2 | SUCCESSFUL | DELIVERED         | f            |        1 | 
+        3 | SUCCESSFUL | DELIVERED         | f            |        1 | 
+        4 | FAILED     | ASSIGNED          | t            |        1 | RECIPIENT_ABSENT
+(4 rows)
+
+ reservations | released 
+--------------+----------
+            1 |        1
+(1 row)
+
+  status  | outcome | attempts 
+----------+---------+----------
+ ASSIGNED | PENDING |        0
+(1 row)
+

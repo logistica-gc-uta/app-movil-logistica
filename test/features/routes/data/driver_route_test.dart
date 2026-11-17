@@ -183,4 +183,132 @@ void main() {
     );
     expect(route.currentStop, isNull);
   });
+
+  group('cierre de ruta (#8)', () {
+    Map<String, dynamic> visit(
+      String orderId,
+      String outcome, {
+      List<Map<String, dynamic>> attempts = const [],
+      bool isLegacy = false,
+    }) => {
+      'id': 'stop-$orderId',
+      'routeId': 'r1',
+      'orderId': orderId,
+      'sequence': 1,
+      'outcome': outcome,
+      'isLegacy': isLegacy,
+      'createdAt': null,
+      'attempts': attempts,
+    };
+
+    test('ruta sin zona (era de cobertura) no rompe la lectura', () {
+      final json = routeJson(orders: [order('o1', 1, 'ASSIGNED')])
+        ..['zone'] = null;
+      final route = DriverRoute.fromJson(json);
+      expect(route.zoneName, 'Ruta sin zona');
+      expect(route.zoneCode, isNull);
+    });
+
+    test('lee el id de la visita y el motivo del intento fallido', () {
+      final route = DriverRoute.fromJson(
+        routeJson(
+          orders: [order('o1', 1, 'ASSIGNED'), order('o2', 2, 'IN_TRANSIT')],
+          stops: [
+            visit(
+              'o1',
+              'FAILED',
+              attempts: [
+                {
+                  'id': 'a1',
+                  'stopId': 'stop-o1',
+                  'driverId': 'd1',
+                  'recordedAt': '2026-10-18T15:00:00Z',
+                  'outcome': 'FAILED',
+                  'failureReason': 'RECIPIENT_REFUSED',
+                  'context': 'No aceptó el paquete',
+                },
+              ],
+            ),
+            visit('o2', 'PENDING'),
+          ],
+        ),
+      );
+      final failed = route.stops.first;
+      expect(failed.stopId, 'stop-o1');
+      expect(failed.isFailed, isTrue);
+      expect(failed.failureReason, FailedVisitReason.recipientRefused);
+      expect(failed.failureContext, 'No aceptó el paquete');
+      expect(failed.canRecordFailure, isFalse);
+      // El pedido sigue ASSIGNED: un fallo no inventa CANCELLED ni DELIVERED.
+      expect(failed.status, 'ASSIGNED');
+      expect(route.stops.last.canRecordFailure, isTrue);
+    });
+
+    test('sin visita verificada no se puede registrar un fallo', () {
+      final legacy = DriverRoute.fromJson(
+        routeJson(
+          orders: [order('o1', 1, 'ASSIGNED')],
+          stops: [visit('o1', 'PENDING', isLegacy: true)],
+        ),
+      );
+      final withoutStop = DriverRoute.fromJson(
+        routeJson(orders: [order('o1', 1, 'ASSIGNED')]),
+      );
+      expect(legacy.stops.single.canRecordFailure, isFalse);
+      expect(withoutStop.stops.single.stopId, isNull);
+      expect(withoutStop.stops.single.canRecordFailure, isFalse);
+    });
+
+    test('cerrar y regresar son pasos distintos', () {
+      final json = routeJson(
+        orders: [order('o1', 1, 'DELIVERED'), order('o2', 2, 'ASSIGNED')],
+        stops: [visit('o1', 'SUCCESSFUL'), visit('o2', 'FAILED')],
+      );
+      final inProgress = DriverRoute.fromJson(json);
+      expect(inProgress.awaitsCompletion, isTrue);
+      expect(inProgress.awaitsReturn, isFalse);
+
+      final completed = inProgress.withConfirmedCompletion(
+        DateTime.utc(2026, 10, 18, 17),
+      );
+      expect(completed.status, 'COMPLETED');
+      expect(completed.completedAt, DateTime.utc(2026, 10, 18, 17));
+      expect(completed.awaitsCompletion, isFalse);
+      expect(completed.awaitsReturn, isTrue);
+
+      final returned = completed.withConfirmedReturn(
+        'COMPLETED',
+        DateTime.utc(2026, 10, 18, 18),
+      );
+      expect(returned.awaitsReturn, isFalse);
+      expect(returned.returnedAt, DateTime.utc(2026, 10, 18, 18));
+    });
+
+    test('una ruta interrumpida espera el regreso con su motivo', () {
+      final json =
+          routeJson(
+              orders: [order('o1', 1, 'ASSIGNED')],
+              stops: [visit('o1', 'PENDING')],
+            )
+            ..['status'] = 'INTERRUPTED'
+            ..['emergency'] = {'id': 'e1', 'reason': 'Falla mecánica'};
+      final route = DriverRoute.fromJson(json);
+      expect(route.isInterrupted, isTrue);
+      expect(route.awaitsCompletion, isFalse);
+      expect(route.awaitsReturn, isTrue);
+      expect(route.interruptionReason, 'Falla mecánica');
+      expect(route.currentStop, isNotNull);
+      expect(route.isInProgress, isFalse);
+    });
+
+    test('lee completedAt del servidor', () {
+      final json = routeJson(orders: [])
+        ..['status'] = 'COMPLETED'
+        ..['completedAt'] = '2026-10-18T17:05:00Z';
+      expect(
+        DriverRoute.fromJson(json).completedAt,
+        DateTime.utc(2026, 10, 18, 17, 5),
+      );
+    });
+  });
 }

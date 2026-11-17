@@ -1,5 +1,6 @@
 import 'dart:math' as math;
 
+import 'package:app_movil_logistica/core/network/request_id.dart';
 import 'package:app_movil_logistica/core/theme/app_theme.dart';
 import 'package:app_movil_logistica/features/auth/data/auth_session.dart';
 import 'package:app_movil_logistica/features/routes/data/driver_route.dart';
@@ -44,7 +45,33 @@ class _MyRoutePageState extends State<MyRoutePage> with WidgetsBindingObserver {
   /// confirmación se muestra cuando el camión llega a su destino.
   String? _finishedRouteId;
 
-  bool get _isMutating => _updatingOrderId != null || _startingRouteId != null;
+  /// Visita cuyo intento fallido se está enviando.
+  String? _failingStopId;
+
+  /// Ruta que se está cerrando o cuyo regreso se está confirmando.
+  String? _closingRouteId;
+  String? _returningRouteId;
+  bool _closeNeedsRefresh = false;
+
+  /// Último intento fallido sin confirmar. Si el chofer lo reenvía sin
+  /// cambios se usa el mismo `requestId`, que el servidor trata como
+  /// repetición; con otros datos se genera uno nuevo.
+  _FailureDraft? _failureDraft;
+
+  /// Disponibilidad informada por el servidor tras confirmar el regreso o al
+  /// consultarla. Nunca se deduce del estado de la ruta.
+  DriverAvailability? _availability;
+  bool _checkingAvailability = false;
+
+  bool get _isMutating =>
+      _updatingOrderId != null ||
+      _startingRouteId != null ||
+      _failingStopId != null ||
+      _closingRouteId != null ||
+      _returningRouteId != null;
+
+  bool get _needsRefresh =>
+      _ordersNeedRefresh || _startNeedsRefresh || _closeNeedsRefresh;
 
   @override
   void initState() {
@@ -79,6 +106,17 @@ class _MyRoutePageState extends State<MyRoutePage> with WidgetsBindingObserver {
         _isLoading = false;
         _startNeedsRefresh = false;
         _ordersNeedRefresh = false;
+        _closeNeedsRefresh = false;
+        // Un intento ya resuelto en el servidor no se vuelve a ofrecer.
+        final draft = _failureDraft;
+        if (draft != null &&
+            !routes.any(
+              (route) => route.stops.any(
+                (stop) => stop.stopId == draft.stopId && !stop.isFailed,
+              ),
+            )) {
+          _failureDraft = null;
+        }
       });
       return true;
     } on RoutesException catch (error) {
@@ -160,7 +198,7 @@ class _MyRoutePageState extends State<MyRoutePage> with WidgetsBindingObserver {
     setState(() {
       _updatingOrderId = null;
     });
-    messenger.showSnackBar(SnackBar(content: Text(message)));
+    _notify(messenger, message);
   }
 
   Future<void> _start(DriverRoute route) async {
@@ -220,7 +258,258 @@ class _MyRoutePageState extends State<MyRoutePage> with WidgetsBindingObserver {
     setState(() {
       _startingRouteId = null;
     });
-    messenger.showSnackBar(SnackBar(content: Text(message)));
+    _notify(messenger, message);
+  }
+
+  /// Pide motivo y descripción y registra el intento fallido de la parada en
+  /// turno. Solo se confirma con la respuesta persistida del servidor.
+  Future<void> _reportFailure(DriverRoute route, DeliveryStop stop) async {
+    final stopId = stop.stopId;
+    if (_isMutating ||
+        _needsRefresh ||
+        stopId == null ||
+        !route.isInProgress ||
+        route.currentStop?.orderId != stop.orderId ||
+        !stop.canRecordFailure) {
+      return;
+    }
+    final previous = _failureDraft?.stopId == stopId ? _failureDraft : null;
+    final input = await showModalBottomSheet<(FailedVisitReason, String)>(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: _Tone.card,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(16)),
+      ),
+      builder: (_) => _FailedVisitSheet(
+        address: stop.address,
+        initialReason: previous?.reason,
+        initialContext: previous?.context,
+      ),
+    );
+    if (input == null || !mounted || _isMutating) return;
+    final (reason, description) = input;
+    // Mismos datos que un envío sin confirmar: misma identidad de solicitud.
+    final draft =
+        previous != null &&
+            previous.reason == reason &&
+            previous.context == description
+        ? previous
+        : _FailureDraft(
+            stopId: stopId,
+            reason: reason,
+            context: description,
+            requestId: newRequestId(),
+          );
+    final messenger = ScaffoldMessenger.of(context);
+    messenger.hideCurrentSnackBar();
+    ++_loadSequence;
+    setState(() {
+      _failureDraft = draft;
+      _failingStopId = stopId;
+    });
+    String message;
+    try {
+      await widget.routesService.recordFailedVisit(
+        routeId: route.id,
+        stopId: stopId,
+        reason: draft.reason,
+        context: draft.context,
+        requestId: draft.requestId,
+      );
+      final refreshed = await _load();
+      if (!mounted) return;
+      _failureDraft = null;
+      _ordersNeedRefresh = !refreshed;
+      message = refreshed
+          ? 'Intento fallido registrado.'
+          : 'El servidor registró el intento fallido, pero no se pudo actualizar '
+                'la lista. Desliza hacia abajo para consultar el estado actual.';
+    } on RoutesException catch (error) {
+      if (!mounted) return;
+      if (error.statusCode == 401 &&
+          widget.routesService.apiClient.onUnauthorized != null) {
+        return;
+      }
+      message = error.message;
+      // La respuesta pudo perderse después de persistir: se consulta GET
+      // antes de permitir otro envío, y nunca se reenvía automáticamente.
+      if (error.statusCode != 400 &&
+          error.statusCode != 401 &&
+          error.statusCode != 403) {
+        final refreshed = await _load();
+        if (!mounted) return;
+        _ordersNeedRefresh = !refreshed;
+        final persisted = _routes.any(
+          (r) => r.stops.any((s) => s.stopId == stopId && s.isFailed),
+        );
+        if (refreshed && persisted) {
+          message = 'El servidor ya había registrado el intento fallido.';
+        }
+      }
+    }
+    if (!mounted) return;
+    setState(() {
+      _failingStopId = null;
+    });
+    _notify(messenger, message);
+    final current = _routes.where((r) => r.id == route.id).firstOrNull;
+    if (current != null &&
+        current.allStopsResolved &&
+        !route.allStopsResolved) {
+      _finishedRouteId = current.id;
+      await _celebrateIfFinished();
+    }
+  }
+
+  /// Cierra la ruta cuando todas sus visitas están resueltas. El chofer sigue
+  /// ocupado hasta confirmar su llegada al depósito.
+  Future<void> _complete(DriverRoute route) async {
+    if (_isMutating || _needsRefresh || !route.awaitsCompletion) return;
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (_) => _ConfirmDialog(
+        icon: Icons.flag_outlined,
+        title: '¿Cerrar la ruta?',
+        message:
+            '${_finishedDetail(route)}. Después de cerrarla no podrás cambiar '
+            'las visitas. Seguirás ocupado hasta confirmar tu llegada al '
+            'depósito.',
+        confirmLabel: 'Cerrar ruta',
+      ),
+    );
+    if (confirmed != true || !mounted || _isMutating) return;
+    await _mutateRoute(
+      route,
+      onStart: () => _closingRouteId = route.id,
+      onEnd: () => _closingRouteId = null,
+      request: () async {
+        final completedAt = await widget.routesService.completeRoute(route.id);
+        return (DriverRoute current) =>
+            current.withConfirmedCompletion(completedAt);
+      },
+      success: 'Ruta cerrada. Regresa al depósito y confirma tu llegada.',
+      partial:
+          'El servidor cerró la ruta. No se pudo actualizar la lista; '
+          'desliza para reintentar.',
+    );
+  }
+
+  /// Confirma la llegada física al depósito. La disponibilidad que se
+  /// muestra después es la que devuelve el servidor.
+  Future<void> _confirmReturn(DriverRoute route) async {
+    if (_isMutating || _needsRefresh || !route.awaitsReturn) return;
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (_) => const _ConfirmDialog(
+        icon: Icons.home_work_outlined,
+        title: '¿Ya estás en el depósito?',
+        message:
+            'Confirma solo cuando hayas llegado. La app no verifica tu '
+            'ubicación: tu confirmación queda registrada en el servidor.',
+        confirmLabel: 'Confirmar llegada',
+      ),
+    );
+    if (confirmed != true || !mounted || _isMutating) return;
+    await _mutateRoute(
+      route,
+      onStart: () => _returningRouteId = route.id,
+      onEnd: () => _returningRouteId = null,
+      request: () async {
+        final result = await widget.routesService.confirmReturn(route.id);
+        _availability = result.availability;
+        return (DriverRoute current) =>
+            current.withConfirmedReturn(result.routeStatus, result.returnedAt);
+      },
+      success: 'Llegada al depósito confirmada.',
+      partial:
+          'El servidor confirmó tu llegada. No se pudo actualizar la lista; '
+          'desliza para reintentar.',
+    );
+  }
+
+  /// Envía una mutación de la ruta y aplica solo lo que el servidor confirma.
+  /// Si la respuesta se pierde, consulta GET; nunca reenvía la mutación.
+  Future<void> _mutateRoute(
+    DriverRoute route, {
+    required VoidCallback onStart,
+    required VoidCallback onEnd,
+    required Future<DriverRoute Function(DriverRoute)> Function() request,
+    required String success,
+    required String partial,
+  }) async {
+    final messenger = ScaffoldMessenger.of(context);
+    messenger.hideCurrentSnackBar();
+    ++_loadSequence;
+    setState(onStart);
+    String message;
+    try {
+      final apply = await request();
+      if (!mounted) return;
+      setState(() {
+        _routes = [
+          for (final current in _routes)
+            if (current.id == route.id) apply(current) else current,
+        ];
+      });
+      final refreshed = await _load();
+      message = refreshed ? success : partial;
+    } on RoutesException catch (error) {
+      if (!mounted) return;
+      if (error.statusCode == 401 &&
+          widget.routesService.apiClient.onUnauthorized != null) {
+        return;
+      }
+      if (error.statusCode != 401 && error.statusCode != 403) {
+        final refreshed = await _load();
+        if (!mounted) return;
+        if (!refreshed) {
+          setState(() {
+            _closeNeedsRefresh = true;
+          });
+        }
+      }
+      message = error.message;
+    }
+    if (!mounted) return;
+    setState(onEnd);
+    _notify(messenger, message);
+  }
+
+  /// Consulta la disponibilidad efectiva que informa el servidor.
+  Future<void> _checkAvailability() async {
+    if (_checkingAvailability) return;
+    setState(() {
+      _checkingAvailability = true;
+    });
+    String? message;
+    try {
+      final availability = await widget.routesService.fetchMyAvailability();
+      if (!mounted) return;
+      _availability = availability;
+    } on RoutesException catch (error) {
+      if (!mounted) return;
+      if (error.statusCode == 401 &&
+          widget.routesService.apiClient.onUnauthorized != null) {
+        return;
+      }
+      message = error.message;
+    }
+    if (!mounted) return;
+    setState(() {
+      _checkingAvailability = false;
+    });
+    if (message != null) {
+      _notify(ScaffoldMessenger.of(context), message);
+    }
+  }
+
+  /// Muestra solo el resultado más reciente: descarta avisos anteriores que
+  /// sigan en cola para que no tapen el de la última acción.
+  void _notify(ScaffoldMessengerState messenger, String message) {
+    messenger
+      ..clearSnackBars()
+      ..showSnackBar(SnackBar(content: Text(message)));
   }
 
   void _enterRoute(DriverRoute route) {
@@ -364,9 +653,7 @@ class _MyRoutePageState extends State<MyRoutePage> with WidgetsBindingObserver {
         padding: const EdgeInsets.fromLTRB(20, 4, 20, 40),
         children: [
           if (open == null) _Greeting(name: widget.user.name, date: _date),
-          if (errorMessage != null ||
-              _ordersNeedRefresh ||
-              _startNeedsRefresh) ...[
+          if (errorMessage != null || _needsRefresh) ...[
             const SizedBox(height: 16),
             _Notice(
               errorMessage ?? 'El estado de la ruta necesita actualizarse.',
@@ -374,6 +661,9 @@ class _MyRoutePageState extends State<MyRoutePage> with WidgetsBindingObserver {
                   ? 'Actualiza el estado antes de volver a cambiar una entrega.'
                   : _startNeedsRefresh
                   ? 'Actualiza la lista antes de volver a intentar iniciar una ruta.'
+                  : _closeNeedsRefresh
+                  ? 'Actualiza la lista antes de volver a cerrar la ruta o '
+                        'confirmar tu llegada.'
                   : null,
               onRetry: () => _load(),
               retryEnabled: !_isMutating,
@@ -384,9 +674,21 @@ class _MyRoutePageState extends State<MyRoutePage> with WidgetsBindingObserver {
             _RouteStops(
               route: open,
               updatingOrderId: _updatingOrderId,
-              isLocked: _isMutating || _ordersNeedRefresh,
+              failingStopId: _failingStopId,
+              isLocked: _isMutating || _needsRefresh,
               onAdvance: _advance,
+              onFail: (stop) => _reportFailure(open, stop),
               onArrived: _celebrateIfFinished,
+              nextStep: _RouteNextStep(
+                isBusy:
+                    _closingRouteId == open.id || _returningRouteId == open.id,
+                isLocked: _isMutating || _needsRefresh,
+                onComplete: () => _complete(open),
+                onReturn: () => _confirmReturn(open),
+              ),
+              availability: _availability,
+              checkingAvailability: _checkingAvailability,
+              onCheckAvailability: _checkAvailability,
             ),
           ] else ...[
             const SizedBox(height: 24),
@@ -402,14 +704,19 @@ class _MyRoutePageState extends State<MyRoutePage> with WidgetsBindingObserver {
               _RouteHero(
                 key: ValueKey('route-${route.id}'),
                 route: route,
-                canStart:
-                    widget.user.isDriver &&
-                    !_startNeedsRefresh &&
-                    !_ordersNeedRefresh,
+                canStart: widget.user.isDriver && !_needsRefresh,
                 isStarting: _startingRouteId == route.id,
                 isLocked: _isMutating,
                 onStart: () => _start(route),
                 onOpen: () => _enterRoute(route),
+                nextStep: _RouteNextStep(
+                  isBusy:
+                      _closingRouteId == route.id ||
+                      _returningRouteId == route.id,
+                  isLocked: _isMutating || _needsRefresh,
+                  onComplete: () => _complete(route),
+                  onReturn: () => _confirmReturn(route),
+                ),
               ),
               const SizedBox(height: 20),
             ],
@@ -500,8 +807,18 @@ class _Greeting extends StatelessWidget {
 (IconData, String)? _routeHint(DriverRoute route) {
   return switch (route.status) {
     'IN_PROGRESS' when route.allStopsResolved => (
-      Icons.home_work_outlined,
-      'Todas las paradas están atendidas. Regresa al depósito.',
+      Icons.flag_outlined,
+      'Todas las visitas están resueltas. Cierra la ruta para registrar su fin.',
+    ),
+    'INTERRUPTED' when route.returnedAt == null => (
+      Icons.report_outlined,
+      'La administración interrumpió esta ruta. No atiendas más paradas: '
+          'regresa al depósito y confirma tu llegada.',
+    ),
+    'INTERRUPTED' => (
+      Icons.verified_outlined,
+      'Ruta interrumpida. Regreso al depósito confirmado; la administración '
+          'gestiona los pedidos pendientes.',
     ),
     'COMPLETED' when route.returnedAt == null => (
       Icons.home_work_outlined,
@@ -538,6 +855,7 @@ class _RouteHero extends StatefulWidget {
     required this.isLocked,
     required this.onStart,
     required this.onOpen,
+    required this.nextStep,
   });
 
   final DriverRoute route;
@@ -546,9 +864,47 @@ class _RouteHero extends StatefulWidget {
   final bool isLocked;
   final VoidCallback onStart;
   final VoidCallback onOpen;
+  final _RouteNextStep nextStep;
 
   @override
   State<_RouteHero> createState() => _RouteHeroState();
+}
+
+/// Paso pendiente de una ruta con las visitas resueltas: cerrarla y, después,
+/// confirmar el regreso al depósito.
+class _RouteNextStep {
+  const _RouteNextStep({
+    required this.isBusy,
+    required this.isLocked,
+    required this.onComplete,
+    required this.onReturn,
+  });
+
+  final bool isBusy;
+  final bool isLocked;
+  final VoidCallback onComplete;
+  final VoidCallback onReturn;
+
+  /// Acción, etiqueta e icono del paso, o null si la ruta no tiene ninguno.
+  (VoidCallback, String, IconData, Key)? of(DriverRoute route) {
+    if (route.awaitsCompletion) {
+      return (
+        onComplete,
+        isBusy ? 'Cerrando…' : 'Cerrar ruta',
+        Icons.flag_rounded,
+        ValueKey('complete-route-${route.id}'),
+      );
+    }
+    if (route.awaitsReturn) {
+      return (
+        onReturn,
+        isBusy ? 'Confirmando…' : 'Confirmar llegada al depósito',
+        Icons.home_work_rounded,
+        ValueKey('return-route-${route.id}'),
+      );
+    }
+    return null;
+  }
 }
 
 class _RouteHeroState extends State<_RouteHero> {
@@ -724,9 +1080,41 @@ class _RouteHeroState extends State<_RouteHero> {
     ];
   }
 
-  /// Iniciar si está asignada; si ya empezó, entrar a sus paradas.
+  /// Iniciar si está asignada; si ya empezó, entrar a sus paradas. Si falta
+  /// cerrarla o confirmar el regreso, ese paso es la acción principal.
   Widget? _action(BuildContext context) {
     final route = widget.route;
+    if (widget.nextStep.of(route) case (
+      final onPressed,
+      final label,
+      final icon,
+      final key,
+    )) {
+      return Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          _heroButton(
+            context,
+            key: key,
+            label: label,
+            icon: icon,
+            busy: widget.nextStep.isBusy,
+            onPressed: widget.nextStep.isLocked ? null : onPressed,
+          ),
+          const SizedBox(height: 6),
+          TextButton(
+            key: ValueKey('open-route-${route.id}'),
+            onPressed: widget.isLocked ? null : widget.onOpen,
+            style: TextButton.styleFrom(
+              foregroundColor: Colors.white,
+              disabledForegroundColor: Colors.white38,
+              minimumSize: const Size.fromHeight(44),
+            ),
+            child: const Text('Ver resumen'),
+          ),
+        ],
+      );
+    }
     final (key, label, icon) = switch (route.status) {
       'ASSIGNED' when widget.canStart => (
         ValueKey('start-route-${route.id}'),
@@ -738,7 +1126,7 @@ class _RouteHeroState extends State<_RouteHero> {
         'Continuar ruta',
         Icons.arrow_forward_rounded,
       ),
-      'IN_PROGRESS' || 'COMPLETED' => (
+      'IN_PROGRESS' || 'COMPLETED' || 'INTERRUPTED' => (
         ValueKey('open-route-${route.id}'),
         'Ver resumen',
         Icons.format_list_bulleted_rounded,
@@ -747,14 +1135,31 @@ class _RouteHeroState extends State<_RouteHero> {
     };
     if (label == null) return null;
     final starting = route.status == 'ASSIGNED';
-
-    return FilledButton(
-      key: key,
+    return _heroButton(
+      context,
+      key: key!,
+      label: label,
+      icon: icon!,
+      busy: starting && widget.isStarting,
       onPressed: widget.isLocked
           ? null
           : starting
           ? widget.onStart
           : widget.onOpen,
+    );
+  }
+
+  Widget _heroButton(
+    BuildContext context, {
+    required Key key,
+    required String label,
+    required IconData icon,
+    required bool busy,
+    required VoidCallback? onPressed,
+  }) {
+    return FilledButton(
+      key: key,
+      onPressed: onPressed,
       style: FilledButton.styleFrom(
         backgroundColor: Colors.white,
         foregroundColor: AppColors.ink,
@@ -771,7 +1176,7 @@ class _RouteHeroState extends State<_RouteHero> {
       child: Row(
         mainAxisSize: MainAxisSize.min,
         children: [
-          if (starting && widget.isStarting)
+          if (busy)
             const SizedBox(
               width: 20,
               height: 20,
@@ -783,7 +1188,8 @@ class _RouteHeroState extends State<_RouteHero> {
           else
             Icon(icon, size: 24),
           const SizedBox(width: 10),
-          Text(label),
+          // Con letra grande la etiqueta pasa a dos líneas en vez de cortarse.
+          Flexible(child: Text(label, textAlign: TextAlign.center)),
         ],
       ),
     );
@@ -853,15 +1259,27 @@ class _RouteStops extends StatelessWidget {
   const _RouteStops({
     required this.route,
     required this.updatingOrderId,
+    required this.failingStopId,
     required this.isLocked,
     required this.onAdvance,
+    required this.onFail,
     required this.onArrived,
+    required this.nextStep,
+    required this.availability,
+    required this.checkingAvailability,
+    required this.onCheckAvailability,
   });
   final DriverRoute route;
   final String? updatingOrderId;
+  final String? failingStopId;
   final bool isLocked;
   final ValueChanged<DeliveryStop> onAdvance;
+  final ValueChanged<DeliveryStop> onFail;
   final VoidCallback onArrived;
+  final _RouteNextStep nextStep;
+  final DriverAvailability? availability;
+  final bool checkingAvailability;
+  final VoidCallback onCheckAvailability;
 
   @override
   Widget build(BuildContext context) {
@@ -917,6 +1335,61 @@ class _RouteStops extends StatelessWidget {
           const SizedBox(height: 14),
           _Notice(text),
         ],
+        if (nextStep.of(route) case (
+          final onPressed,
+          final label,
+          final icon,
+          final key,
+        )) ...[
+          const SizedBox(height: 14),
+          FilledButton(
+            key: key,
+            onPressed: nextStep.isLocked ? null : onPressed,
+            style: FilledButton.styleFrom(
+              backgroundColor: AppColors.primary,
+              foregroundColor: Colors.white,
+              disabledBackgroundColor: AppColors.primary.withValues(
+                alpha: 0.45,
+              ),
+              disabledForegroundColor: Colors.white,
+              minimumSize: const Size.fromHeight(52),
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(10),
+              ),
+              textStyle: _weight(
+                textTheme.labelLarge,
+                FontWeight.w700,
+                size: 16,
+              ),
+            ),
+            child: nextStep.isBusy
+                ? const SizedBox(
+                    width: 20,
+                    height: 20,
+                    child: CircularProgressIndicator(
+                      strokeWidth: 2.5,
+                      color: Colors.white,
+                    ),
+                  )
+                : Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Icon(icon, size: 20),
+                      const SizedBox(width: 10),
+                      Flexible(child: Text(label)),
+                    ],
+                  ),
+          ),
+        ],
+        if (route.status == 'COMPLETED' || route.isInterrupted) ...[
+          const SizedBox(height: 14),
+          _LifecycleSummary(
+            route: route,
+            availability: availability,
+            checkingAvailability: checkingAvailability,
+            onCheckAvailability: onCheckAvailability,
+          ),
+        ],
         const SizedBox(height: 28),
         Row(
           children: [
@@ -935,11 +1408,151 @@ class _RouteStops extends StatelessWidget {
             isLast: i == route.stops.length - 1,
             currentStop: route.isInProgress ? route.currentStop : null,
             isUpdating: updatingOrderId == route.stops[i].orderId,
+            isFailing:
+                failingStopId != null && failingStopId == route.stops[i].stopId,
             isLocked: isLocked,
             onAdvance: () => onAdvance(route.stops[i]),
+            onFail: () => onFail(route.stops[i]),
             onArrived: onArrived,
           ),
       ],
+    );
+  }
+}
+
+/// Distingue los pasos del cierre: visitas resueltas, ruta cerrada, regreso
+/// confirmado y disponibilidad informada por el servidor.
+class _LifecycleSummary extends StatelessWidget {
+  const _LifecycleSummary({
+    required this.route,
+    required this.availability,
+    required this.checkingAvailability,
+    required this.onCheckAvailability,
+  });
+
+  final DriverRoute route;
+  final DriverAvailability? availability;
+  final bool checkingAvailability;
+  final VoidCallback onCheckAvailability;
+
+  @override
+  Widget build(BuildContext context) {
+    final textTheme = Theme.of(context).textTheme;
+    final returned = route.returnedAt;
+    final completed = route.completedAt;
+    final availability = this.availability;
+    return Container(
+      key: const ValueKey('route-lifecycle'),
+      padding: const EdgeInsets.all(18),
+      decoration: BoxDecoration(
+        color: _Tone.card,
+        borderRadius: BorderRadius.circular(14),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          _LifecycleRow(
+            done: route.allStopsResolved,
+            title: 'Visitas',
+            detail:
+                '${route.resolvedCount}/${route.stops.length} resueltas · '
+                '${_finishedDetail(route)}',
+          ),
+          _LifecycleRow(
+            done: true,
+            title: route.isInterrupted ? 'Ruta interrumpida' : 'Ruta cerrada',
+            detail: route.isInterrupted
+                ? (route.interruptionReason?.trim().isNotEmpty ?? false)
+                      ? 'Por la administración: ${route.interruptionReason!.trim()}'
+                      : 'Por la administración'
+                : completed != null
+                ? 'Cerrada a las ${formatEcuadorTime(completed)} (Ecuador)'
+                : 'Cerrada en el servidor',
+          ),
+          _LifecycleRow(
+            done: returned != null,
+            title: 'Regreso al depósito',
+            detail: returned != null
+                ? 'Confirmado a las ${formatEcuadorTime(returned)} (Ecuador)'
+                : 'Pendiente: sigues ocupado hasta confirmarlo',
+          ),
+          if (returned != null)
+            _LifecycleRow(
+              done: availability?.isAvailable ?? false,
+              title: 'Disponibilidad',
+              detail: availability == null
+                  ? 'Consulta al servidor si puedes recibir una nueva ruta.'
+                  : availability.isAvailable
+                  ? 'El servidor te marca disponible para una nueva ruta.'
+                  : 'El servidor aún no te habilita para otra ruta. '
+                        'Consulta con la administración.',
+              trailing: TextButton(
+                key: const ValueKey('check-availability'),
+                onPressed: checkingAvailability ? null : onCheckAvailability,
+                child: Text(
+                  checkingAvailability ? 'Consultando…' : 'Consultar',
+                  style: textTheme.bodySmall?.copyWith(
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
+              ),
+            ),
+        ],
+      ),
+    );
+  }
+}
+
+class _LifecycleRow extends StatelessWidget {
+  const _LifecycleRow({
+    required this.done,
+    required this.title,
+    required this.detail,
+    this.trailing,
+  });
+
+  final bool done;
+  final String title;
+  final String detail;
+  final Widget? trailing;
+
+  @override
+  Widget build(BuildContext context) {
+    final textTheme = Theme.of(context).textTheme;
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 6),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Icon(
+            done ? Icons.check_circle_rounded : Icons.schedule_rounded,
+            size: 20,
+            color: done ? _Tone.green : _Tone.amber,
+          ),
+          const SizedBox(width: 12),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  title,
+                  style: _weight(
+                    textTheme.bodyMedium,
+                    FontWeight.w600,
+                    color: AppColors.ink,
+                  ),
+                ),
+                const SizedBox(height: 2),
+                Text(
+                  detail,
+                  style: textTheme.bodySmall?.copyWith(color: AppColors.text),
+                ),
+              ],
+            ),
+          ),
+          ?trailing,
+        ],
+      ),
     );
   }
 }
@@ -970,11 +1583,15 @@ class _StartTime extends StatelessWidget {
 }
 
 /// Hora confirmada por el servidor, independiente de la zona del teléfono.
-String formatRouteStart(DateTime time) {
+String formatRouteStart(DateTime time) =>
+    'Inicio: ${formatEcuadorTime(time)} (Ecuador)';
+
+/// `HH:mm` en hora de Ecuador (UTC-5), sin depender de la zona del teléfono.
+String formatEcuadorTime(DateTime time) {
   final local = time.toUtc().subtract(const Duration(hours: 5));
   final hour = local.hour.toString().padLeft(2, '0');
   final minute = local.minute.toString().padLeft(2, '0');
-  return 'Inicio: $hour:$minute (Ecuador)';
+  return '$hour:$minute';
 }
 
 class _RouteStatusChip extends StatelessWidget {
@@ -989,6 +1606,7 @@ class _RouteStatusChip extends StatelessWidget {
     final (label, dot) = switch (status) {
       'IN_PROGRESS' => ('En curso', onDark ? _Tone.blueOnDark : _Tone.blue),
       'COMPLETED' => ('Completada', onDark ? _Tone.greenOnDark : _Tone.green),
+      'INTERRUPTED' => ('Interrumpida', onDark ? _Tone.redOnDark : _Tone.red),
       'ASSIGNED' => ('Asignada', onDark ? _Tone.amberOnDark : _Tone.amber),
       'DRAFT' => ('Borrador', muted),
       _ => ('Sin verificar', muted),
@@ -1064,8 +1682,10 @@ class _StopItem extends StatefulWidget {
     required this.isLast,
     required this.currentStop,
     required this.isUpdating,
+    required this.isFailing,
     required this.isLocked,
     required this.onAdvance,
+    required this.onFail,
     required this.onArrived,
   });
 
@@ -1075,8 +1695,10 @@ class _StopItem extends StatefulWidget {
   /// Parada en turno de una ruta en curso; null si no se puede avanzar.
   final DeliveryStop? currentStop;
   final bool isUpdating;
+  final bool isFailing;
   final bool isLocked;
   final VoidCallback onAdvance;
+  final VoidCallback onFail;
 
   /// Se llama cuando el camión llega al destino tras confirmar la entrega.
   final VoidCallback onArrived;
@@ -1118,8 +1740,10 @@ class _StopItemState extends State<_StopItem> {
       onArrived: _arrived,
       currentStop: widget.currentStop,
       isUpdating: widget.isUpdating,
+      isFailing: widget.isFailing,
       isLocked: widget.isLocked,
       onAdvance: widget.onAdvance,
+      onFail: widget.onFail,
     ),
   );
 }
@@ -1131,8 +1755,10 @@ class _StopCard extends StatelessWidget {
     required this.onArrived,
     required this.currentStop,
     required this.isUpdating,
+    required this.isFailing,
     required this.isLocked,
     required this.onAdvance,
+    required this.onFail,
   });
 
   final DeliveryStop stop;
@@ -1140,8 +1766,10 @@ class _StopCard extends StatelessWidget {
   final VoidCallback onArrived;
   final DeliveryStop? currentStop;
   final bool isUpdating;
+  final bool isFailing;
   final bool isLocked;
   final VoidCallback onAdvance;
+  final VoidCallback onFail;
 
   /// Estado visible de la parada. Mientras el camión llega se mantiene el
   /// trayecto, con la misma clave, para que su animación continúe.
@@ -1159,10 +1787,10 @@ class _StopCard extends StatelessWidget {
       );
     }
     if (stop.isFailed) {
-      return const _ResultPanel(
-        key: ValueKey('failed'),
+      return _ResultPanel(
+        key: const ValueKey('failed'),
         icon: Icons.close_rounded,
-        label: 'Intento fallido',
+        label: _failedLabel(stop),
         color: _Tone.red,
         background: _Tone.redSoft,
       );
@@ -1240,12 +1868,25 @@ class _StopCard extends StatelessWidget {
                     ),
                   ),
                   const SizedBox(height: 4),
-                  if (stop.isDelivered || stop.isFailed)
+                  if (stop.isDelivered || stop.isFailed) ...[
                     Text(
-                      stop.isFailed ? 'Intento fallido' : 'Entregado con éxito',
+                      stop.isFailed
+                          ? _failedLabel(stop)
+                          : 'Entregado con éxito',
                       style: textTheme.bodySmall?.copyWith(color: color),
-                    )
-                  else
+                    ),
+                    if (stop.isFailed && stop.failureContext != null) ...[
+                      const SizedBox(height: 2),
+                      Text(
+                        stop.failureContext!,
+                        maxLines: 2,
+                        overflow: TextOverflow.ellipsis,
+                        style: textTheme.bodySmall?.copyWith(
+                          color: AppColors.textMuted,
+                        ),
+                      ),
+                    ],
+                  ] else
                     Text(
                       _stopStatusLabel(stop),
                       style: textTheme.bodySmall?.copyWith(color: color),
@@ -1349,11 +1990,62 @@ class _StopCard extends StatelessWidget {
                     ),
             ),
           ],
+          // Una visita fallida no es una entrega ni una cancelación: queda
+          // resuelta y la administración decide qué hacer con el pedido.
+          if (isTurn && !arriving && stop.canRecordFailure) ...[
+            const SizedBox(height: 8),
+            OutlinedButton(
+              key: ValueKey('fail-stop-${stop.orderId}'),
+              onPressed: isLocked ? null : onFail,
+              style: OutlinedButton.styleFrom(
+                foregroundColor: _Tone.red,
+                disabledForegroundColor: _Tone.red.withValues(alpha: 0.45),
+                side: BorderSide(color: _Tone.red.withValues(alpha: 0.5)),
+                minimumSize: const Size.fromHeight(48),
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(10),
+                ),
+                textStyle: _weight(
+                  textTheme.labelLarge,
+                  FontWeight.w600,
+                  size: 15,
+                ),
+              ),
+              child: isFailing
+                  ? const SizedBox(
+                      width: 18,
+                      height: 18,
+                      child: CircularProgressIndicator(
+                        strokeWidth: 2.2,
+                        color: _Tone.red,
+                      ),
+                    )
+                  : const Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Icon(Icons.report_gmailerrorred_rounded, size: 20),
+                        SizedBox(width: 8),
+                        Flexible(
+                          child: Text(
+                            'No se pudo entregar',
+                            textAlign: TextAlign.center,
+                          ),
+                        ),
+                      ],
+                    ),
+            ),
+          ],
         ],
       ),
     );
   }
 }
+
+/// «Intento fallido», con su motivo cuando el servidor lo informa.
+String _failedLabel(DeliveryStop stop) => switch (stop.failureReason) {
+  final reason? => 'Intento fallido · ${reason.label}',
+  null => 'Intento fallido',
+};
 
 /// Camión con su paquete recorriendo el trayecto hacia la parada. Al
 /// aparecer avanza hasta antes del destino; con [arrived] termina el
@@ -1678,7 +2370,10 @@ class _FinishedDialog extends StatelessWidget {
                   const SizedBox(width: 8),
                   Expanded(
                     child: Text(
-                      route.returnedAt == null
+                      route.isInProgress
+                          ? 'Cierra la ruta y, al llegar al depósito, confirma '
+                                'tu llegada.'
+                          : route.returnedAt == null
                           ? 'Regresa al depósito y confirma tu llegada.'
                           : 'Regreso al depósito confirmado.',
                       style: textTheme.bodySmall?.copyWith(
@@ -1721,6 +2416,195 @@ class _FinishedDialog extends StatelessWidget {
           ),
         ),
       ),
+    );
+  }
+}
+
+/// Intento fallido enviado y aún sin confirmar.
+class _FailureDraft {
+  const _FailureDraft({
+    required this.stopId,
+    required this.reason,
+    required this.context,
+    required this.requestId,
+  });
+
+  final String stopId;
+  final FailedVisitReason reason;
+  final String context;
+  final String requestId;
+}
+
+/// Hoja para registrar por qué no se pudo entregar: motivo tipificado y una
+/// descripción obligatoria, como exige el servidor.
+class _FailedVisitSheet extends StatefulWidget {
+  const _FailedVisitSheet({
+    required this.address,
+    this.initialReason,
+    this.initialContext,
+  });
+
+  final String address;
+  final FailedVisitReason? initialReason;
+  final String? initialContext;
+
+  @override
+  State<_FailedVisitSheet> createState() => _FailedVisitSheetState();
+}
+
+class _FailedVisitSheetState extends State<_FailedVisitSheet> {
+  static const maxLength = 500;
+
+  late FailedVisitReason? _reason = widget.initialReason;
+  late final _description = TextEditingController(text: widget.initialContext);
+
+  @override
+  void initState() {
+    super.initState();
+    _description.addListener(() => setState(() {}));
+  }
+
+  @override
+  void dispose() {
+    _description.dispose();
+    super.dispose();
+  }
+
+  bool get _isValid => _reason != null && _description.text.trim().isNotEmpty;
+
+  @override
+  Widget build(BuildContext context) {
+    final textTheme = Theme.of(context).textTheme;
+    return Padding(
+      padding: EdgeInsets.only(bottom: MediaQuery.viewInsetsOf(context).bottom),
+      child: SafeArea(
+        child: SingleChildScrollView(
+          padding: const EdgeInsets.fromLTRB(24, 20, 24, 24),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Text('No se pudo entregar', style: textTheme.titleLarge),
+              const SizedBox(height: 4),
+              Text(
+                widget.address,
+                style: textTheme.bodyMedium?.copyWith(
+                  color: AppColors.textMuted,
+                ),
+              ),
+              const SizedBox(height: 18),
+              Text(
+                'Motivo',
+                style: _weight(textTheme.bodyMedium, FontWeight.w600),
+              ),
+              RadioGroup<FailedVisitReason>(
+                groupValue: _reason,
+                onChanged: (value) => setState(() => _reason = value),
+                child: Column(
+                  children: [
+                    for (final reason in FailedVisitReason.values)
+                      RadioListTile<FailedVisitReason>(
+                        key: ValueKey('failure-reason-${reason.code}'),
+                        value: reason,
+                        title: Text(reason.label),
+                        contentPadding: EdgeInsets.zero,
+                        dense: true,
+                      ),
+                  ],
+                ),
+              ),
+              const SizedBox(height: 8),
+              TextField(
+                key: const ValueKey('failure-context'),
+                controller: _description,
+                maxLength: maxLength,
+                minLines: 2,
+                maxLines: 4,
+                textCapitalization: TextCapitalization.sentences,
+                decoration: const InputDecoration(
+                  labelText: 'Qué pasó',
+                  hintText: 'Ej.: Nadie respondió tras tocar dos veces.',
+                ),
+              ),
+              const SizedBox(height: 4),
+              Text(
+                'El pedido no se cancela: la administración decide si se '
+                'reprograma.',
+                style: textTheme.bodySmall?.copyWith(color: AppColors.text),
+              ),
+              const SizedBox(height: 20),
+              FilledButton(
+                key: const ValueKey('submit-failure'),
+                onPressed: _isValid
+                    ? () => Navigator.of(
+                        context,
+                      ).pop((_reason!, _description.text.trim()))
+                    : null,
+                style: FilledButton.styleFrom(
+                  backgroundColor: _Tone.red,
+                  foregroundColor: Colors.white,
+                  minimumSize: const Size.fromHeight(50),
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(10),
+                  ),
+                ),
+                child: const Text('Registrar intento fallido'),
+              ),
+              TextButton(
+                onPressed: () => Navigator.of(context).pop(),
+                style: TextButton.styleFrom(
+                  foregroundColor: AppColors.text,
+                  minimumSize: const Size.fromHeight(44),
+                ),
+                child: const Text('Cancelar'),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+/// Confirmación antes de una acción que no se puede deshacer desde la app.
+class _ConfirmDialog extends StatelessWidget {
+  const _ConfirmDialog({
+    required this.icon,
+    required this.title,
+    required this.message,
+    required this.confirmLabel,
+  });
+
+  final IconData icon;
+  final String title;
+  final String message;
+  final String confirmLabel;
+
+  @override
+  Widget build(BuildContext context) {
+    final textTheme = Theme.of(context).textTheme;
+    return AlertDialog(
+      backgroundColor: _Tone.card,
+      surfaceTintColor: Colors.transparent,
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+      icon: Icon(icon, color: AppColors.ink),
+      title: Text(title, style: textTheme.titleLarge),
+      content: Text(
+        message,
+        style: textTheme.bodyMedium?.copyWith(color: AppColors.text),
+      ),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.of(context).pop(false),
+          child: const Text('Cancelar'),
+        ),
+        FilledButton(
+          key: const ValueKey('confirm-dialog'),
+          onPressed: () => Navigator.of(context).pop(true),
+          style: FilledButton.styleFrom(backgroundColor: AppColors.primary),
+          child: Text(confirmLabel),
+        ),
+      ],
     );
   }
 }
