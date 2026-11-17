@@ -87,11 +87,11 @@ Usa solo datos de prueba ficticios. En las capturas no deben aparecer tokens, co
 | 2 | Mi Ruta del Día con la ruta asignada | Disponible |
 | 3 | (a) **Iniciar ruta** → «En curso» con la hora de inicio en Ecuador | Disponible |
 | 4 | (b) **En camino** → **Entregado** en las paradas, con el progreso | Disponible |
-| 5 | (c) Registrar un **intento fallido** con motivo | **Pendiente (#8)** |
-| 6 | (d) Ruta `COMPLETED` al resolver todas las visitas | **Pendiente (#8)**: la app ya muestra `COMPLETED` si el servidor lo devuelve, pero aún no tiene el botón para cerrar la ruta |
-| 7 | (e) **Confirmar regreso al depósito** y ver al chofer disponible | **Pendiente (#8)** |
+| 5 | (c) **No se pudo entregar**: intento fallido con motivo y descripción | Con #8 |
+| 6 | (d) **Cerrar ruta** al resolver todas las visitas → «Completada», chofer aún ocupado | Con #8 |
+| 7 | (e) **Confirmar llegada al depósito** y ver la disponibilidad que informa el servidor | Con #8 |
 
-Los pasos 5 a 7 dependen de la issue #8. El backend ya publica esos endpoints, pero la app aún no tiene sus controles. Hasta que #8 se integre, la demo los declara pendientes: no se simulan desde la app ni con llamadas manuales presentadas como si fueran la interfaz. La reprogramación de un pedido fallido se hace solo en el panel web ADMIN, nunca desde Flutter.
+Los pasos 5 a 7 los implementa la issue #8. Para la demo completa, compila el APK desde `main` después de fusionar los PR de #6 y #8: un APK compilado solo desde la rama de #6 todavía no tiene esos botones. La reprogramación de un pedido fallido se hace solo en el panel web ADMIN, nunca desde Flutter.
 
 La app no usa GPS continuo ni calcula ETA. El camión animado de «En camino» es solo una ilustración.
 

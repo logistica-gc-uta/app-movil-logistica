@@ -2,7 +2,7 @@
 
 App móvil en Flutter (Android) para el chofer del sistema de logística y entrega de pedidos. Consume la API del [backend](https://github.com/logistica-gc-uta/backend).
 
-**Estado actual:** inicio de sesión del chofer, pantalla «Mi Ruta del Día» e «Iniciar ruta» implementados, con APK de demostración identificado por commit y conexión HTTPS obligatoria en release (ver [APK de demostración](docs/apk-demo.md)). El formulario de entregas fallidas y la confirmación de regreso al depósito (issue #8) siguen pendientes.
+**Estado actual:** inicio de sesión del chofer, «Mi Ruta del Día», «Iniciar ruta», registro de intentos fallidos, cierre de ruta y confirmación de regreso al depósito implementados. El APK de demostración y la conexión al staging se documentan en [APK de demostración](docs/apk-demo.md).
 
 ## Requisitos
 

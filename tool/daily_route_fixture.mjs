@@ -6,8 +6,8 @@ import { dirname, resolve, join } from 'node:path';
 import { pathToFileURL } from 'node:url';
 
 const [action, backendPath, database] = process.argv.slice(2);
-if (!backendPath || !/^mobile_issue[3456]_[a-z0-9_]+$/.test(database ?? '')) {
-  throw new Error('Provide backend path and a database named mobile_issue3_<unique suffix>, mobile_issue4_, mobile_issue5_ or mobile_issue6_<unique suffix>');
+if (!backendPath || !/^mobile_issue[3-8]_[a-z0-9_]+$/.test(database ?? '')) {
+  throw new Error('Provide backend path and a database named mobile_issue<3-8>_<unique suffix>');
 }
 const backend = resolve(backendPath);
 const require = createRequire(join(backend, 'package.json'));
