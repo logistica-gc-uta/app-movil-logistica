@@ -143,7 +143,7 @@ lib/
 ├── app.dart                   Widget raíz: bienvenida, login o zona privada, y selector de colores
 ├── core/                      Código compartido por toda la app
 │   ├── config/                AppConfig: URL base de la API
-│   ├── network/               ApiClient (cliente HTTP), ApiException y newRequestId (UUID v4)
+│   ├── network/               ApiClient (cliente HTTP) y ApiException
 │   ├── theme/                 Tema visual, BrandColors y BrandStorage
 │   └── widgets/               BrandWordmark (marca) y PrimaryButton
 └── features/                  Una carpeta por funcionalidad
