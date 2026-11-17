@@ -47,9 +47,28 @@ El APK de emulador usa `http://10.0.2.2:3003` con `ALLOW_INSECURE_HTTP=true`, po
 
 ## Staging (Coolify + Cloudflare Tunnel)
 
-**Pendiente.** Falta el dominio HTTPS de la API publicada por el backend #16 y un chofer de prueba con una ruta asignada en ese entorno. Con eso se compila `-Environment staging` y se repite el flujo desde una red externa (datos móviles). Sus resultados se agregarán aquí. Hasta entonces no se declara verificada la conexión por el túnel.
+Fecha: 17 de noviembre de 2026. API: `https://api-regalia.sjproyects.me/api/v1`. La URL solo vive en `config/staging.json`, que no se versiona.
 
-Del ciclo completo de la adenda, (c) intento fallido, (d) `COMPLETED` desde la app y (e) regreso al depósito quedan **pendientes de la issue #8**. Ver el [guion](../../apk-demo.md#4-guion-de-la-demostración).
+**Conexión HTTPS: PASS.**
+
+| Dato | Valor |
+|---|---|
+| Archivo | `speedrun-1.0.0-b1-staging-a706396.apk` (47,4 MB, release) |
+| SHA-256 | `93879eff3681cc88611cda9448fada17f99944beb00b2b0b74e84df2f839546e` |
+| Commit móvil | `a706396` |
+| Firma | clave debug (no hay `android/key.properties`) |
+| TLS | TLSv1.3, `TLS_AES_256_GCM_SHA384`, certificado `CN=sjproyects.me` emitido por Google Trust Services (WE1), válido hasta el 22/01/2027, servido por Cloudflare |
+| Salud | `GET /api/v1/health` → 200 `{"status":"ok","database":"up"}`; Swagger desactivado (`/api/docs` → 404), como indica el despliegue |
+
+El APK de staging se instaló en el emulador API 36 y mostró la identificación `v1.0.0+1 · staging · a706396`. Un login con una cuenta ficticia inexistente llegó a NestJS por el túnel. El servidor respondió 401 y la app mostró «Correo o contraseña incorrectos.», sin guardar sesión. El emulador sale a internet por la red del PC, **no por datos móviles**.
+
+![Login contra el staging por HTTPS](07-staging-https-login.png)
+
+**Flujo del chofer en staging: pendiente.** El staging no tiene datos de demostración: los usuarios del *seed* (`driver1@delivery.com`) responden 401. Para cerrar el issue hace falta que ADMIN cree desde el panel web un chofer de prueba con una ruta asignada para el día. Luego, con el APK compilado desde `main` (con #6 y #8 fusionados), se repite el guion completo desde un teléfono con datos móviles. No se usaron ni se buscaron credenciales de administración.
+
+**Observación para el backend:** `http://api-regalia.sjproyects.me/api/v1/health` también responde 200 sin redirigir a HTTPS. La app no se ve afectada, porque las builds release solo aceptan `https://`. Aun así, conviene activar «Always Use HTTPS» en Cloudflare para los demás clientes.
+
+Los pasos (c) a (e) del ciclo completo de la adenda los implementa la issue #8. Ver el [guion](../../apk-demo.md#4-guion-de-la-demostración).
 
 ## Hallazgo durante la prueba
 
