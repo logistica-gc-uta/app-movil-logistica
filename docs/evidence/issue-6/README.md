@@ -64,11 +64,56 @@ El APK de staging se instaló en el emulador API 36 y mostró la identificación
 
 ![Login contra el staging por HTTPS](07-staging-https-login.png)
 
-**Flujo del chofer en staging: pendiente.** El staging no tiene datos de demostración: los usuarios del *seed* (`driver1@delivery.com`) responden 401. Para cerrar el issue hace falta que ADMIN cree desde el panel web un chofer de prueba con una ruta asignada para el día. Luego, con el APK compilado desde `main` (con #6 y #8 fusionados), se repite el guion completo desde un teléfono con datos móviles. No se usaron ni se buscaron credenciales de administración.
+**Flujo del chofer en staging:** el staging no permitía crear pedidos para el mismo día a esa hora; el guion completo se verificó de punta a punta en local (sección siguiente). Repetirlo en staging con datos móviles queda como verificación opcional cuando haya una ruta de hoy allí.
 
 **Observación para el backend:** `http://api-regalia.sjproyects.me/api/v1/health` también responde 200 sin redirigir a HTTPS. La app no se ve afectada, porque las builds release solo aceptan `https://`. Aun así, conviene activar «Always Use HTTPS» en Cloudflare para los demás clientes.
 
 Los pasos (c) a (e) del ciclo completo de la adenda los implementa la issue #8. Ver el [guion](../../apk-demo.md#4-guion-de-la-demostración).
+
+## Demo completa de punta a punta (entorno local)
+
+Fecha: 17 de noviembre de 2026, 19:30–19:45 (Ecuador). Resultado: **PASS**.
+
+**Por qué en local:** el staging solo acepta pedidos dentro del horario de entrega (07:00–17:00), y a esa hora ya no se podía armar una ruta para el mismo día. Por eso el guion completo se ejecutó con el backend local, cuyo código coincide con el desplegado en los módulos que usa la app, y con la misma APK release.
+
+**Preparación desde ADMIN.** Se usaron los mismos endpoints que usa el panel:
+
+1. Se amplió **temporalmente** el horario de la tienda local hasta las 23:59 y se restauró a 07:00–17:00 al terminar.
+2. Se configuró el precio en centavos del producto del *seed*, que la venta ADMIN exige.
+3. Se crearon 3 ventas de invitado con datos inventados, dentro de la cobertura de la tienda, para hoy a las 21:30.
+4. Se tomó la propuesta de planificación, se confirmó como borrador y se asignó a `driver1`.
+
+La ruta resultante no tiene zona: es de la era de cobertura de tienda.
+
+| Dato | Valor |
+|---|---|
+| Archivo | `speedrun-1.0.0-b1-emulator-7045ae9.apk` (48,1 MB, release) |
+| SHA-256 | `a7ae0363b4b2f8ba0e5ac1188216f90804e2a4bbd417b48d818db3b9eabb20f9` |
+| Código | Fusión local de #14, #15 y #16 sobre `main` (`7045ae9`), es decir, lo que quedará en `main` |
+| Backend | `9b17cce`, PostgreSQL local migrado al contrato |
+| Dispositivo | Emulador `Medium_Phone_API_36.1` (Android 16) |
+
+**Guion ejecutado desde la interfaz:**
+
+1. Login de `driver1`. Aparece «Ruta sin zona», asignada, con 0 de 3 entregados.
+2. **Iniciar ruta**, que queda «En curso» a las 19:37.
+3. **En camino** y **Entregado** en las dos primeras paradas.
+4. **No se pudo entregar** en la tercera, con el motivo «Rechazó el pedido» y su descripción. Resultado: «Paradas finalizadas · 2 entregas exitosas · 1 con intento fallido».
+5. **Cerrar ruta**: queda «Completada», con 3/3 visitas resueltas y el chofer aún ocupado.
+6. **Confirmar llegada al depósito**: regreso confirmado a las 19:43 y el servidor lo marca disponible.
+
+| | |
+|---|---|
+| ![Ruta asignada sin zona](08-e2e-ruta-asignada.png) | ![No se pudo entregar](09-e2e-no-se-pudo-entregar.png) |
+| ![Ruta cerrada, chofer ocupado](10-e2e-ruta-cerrada.png) | ![Regreso confirmado y disponible](11-e2e-regreso-disponible.png) |
+
+**Verificación en PostgreSQL:**
+
+- Ruta `COMPLETED`, con el cierre y el regreso registrados, y el chofer disponible.
+- Paradas 1 y 2 `SUCCESSFUL` con pedido `DELIVERED`.
+- Parada 3 `FAILED`, con el pedido aún `ASSIGNED`, `requiresAdministrativeReview = true` y motivo `RECIPIENT_REFUSED`. Así aparece en «Entregas fallidas» del panel para que ADMIN la reprograme.
+
+**Observación de uso:** con un teclado físico, la tecla Escape cierra la hoja de «No se pudo entregar» y se pierde lo escrito si todavía no se envió. Con el botón Atrás de Android primero se oculta el teclado, como es habitual.
 
 ## Hallazgo durante la prueba
 
