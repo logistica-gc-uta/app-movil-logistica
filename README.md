@@ -175,10 +175,38 @@ El avance muestra por separado el porcentaje de entregas exitosas y las visitas 
 
 ## Flujo de trabajo
 
-1. Crea una rama desde `main` con prefijo `feat/`, por ejemplo `feat/auth-flutter`.
-2. Haz tus cambios y confirma que pasan `flutter analyze` y `flutter test`.
-3. Sube la rama y abre un Pull Request hacia `main` que incluya `Closes #N` con el número del issue.
-4. No subas credenciales, tokens ni archivos `.env`.
+Cada issue se resuelve en su propia rama y entra a `main` solo mediante un Pull Request revisado.
+
+1. **Rama.** Actualiza `main` y crea una rama con el tipo de cambio como prefijo:
+
+   ```powershell
+   git checkout main
+   git pull
+   git checkout -b feat/driver-failed-visit
+   ```
+
+   | Prefijo | Uso | Ejemplo |
+   |---|---|---|
+   | `feat/` | Funcionalidad nueva | `feat/driver-start-route` |
+   | `fix/` | Corrección de un error | `fix/login-timeout` |
+   | `test/` | Pruebas o evidencia | `test/issue-5-progress-recovery` |
+   | `chore/` | Configuración, herramientas o documentación | `chore/github-pr-template` |
+
+2. **Commits.** Mensajes con el formato `tipo(ámbito): descripción`, por ejemplo `feat(driver): iniciar ruta con confirmación REST`. Termina el cuerpo con `Refs #N`.
+3. **Validación.** Antes de subir, deben pasar sin errores:
+
+   ```powershell
+   flutter pub get
+   flutter analyze
+   flutter test
+   ```
+
+   Si el cambio afecta pantallas o llamadas a la API, pruébalo también en un emulador o teléfono contra el backend, incluidos los errores de red (sin conexión, timeout y respuestas 401/403/409). Guarda la evidencia en `docs/evidence/issue-N/`.
+4. **Pull Request.** Sube la rama (`git push -u origin <rama>`) y abre el PR hacia `main`. GitHub carga automáticamente la [plantilla](.github/pull_request_template.md): completa la descripción, la tabla de pruebas, el dispositivo y la API usados, las evidencias y el checklist.
+5. **Enlace con el issue.** Escribe `Closes #N` solo si el PR completa el issue: al fusionarlo, GitHub lo cierra automáticamente. Si lo resuelve en parte, usa `Refs #N` y explica qué falta.
+6. **Revisión.** Pide revisión a otro integrante del equipo y atiende sus comentarios en la misma rama. Fusiona solo cuando el PR esté aprobado y la validación haya pasado.
+
+**Nunca subas** credenciales, tokens, archivos `.env`, `config/*.json` locales, `android/key.properties` ni keystores. Las capturas y los logs del PR deben usar datos de prueba ficticios y no mostrar tokens ni contraseñas.
 
 ## Problemas comunes
 
