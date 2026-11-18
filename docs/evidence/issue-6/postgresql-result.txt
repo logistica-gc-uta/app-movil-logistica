@@ -1,0 +1,8 @@
+    ruta     | iniciada | pedido  | pedido_estado |   visita   
+-------------+----------+---------+---------------+------------
+ IN_PROGRESS | t        | order-1 | DELIVERED     | SUCCESSFUL
+ IN_PROGRESS | t        | order-2 | ASSIGNED      | PENDING
+ IN_PROGRESS | t        | order-3 | ASSIGNED      | PENDING
+ IN_PROGRESS | t        | order-4 | ASSIGNED      | PENDING
+(4 rows)
+
