@@ -310,5 +310,26 @@ void main() {
         DateTime.utc(2026, 10, 18, 17, 5),
       );
     });
+
+    test('lee deliveryLat, deliveryLng y depot del servidor', () {
+      final json = routeJson(
+        orders: [
+          {
+            ...order('o1', 1, 'ASSIGNED'),
+            'deliveryLat': -1.2415,
+            'deliveryLng': -78.6195,
+          },
+        ],
+      )..['depot'] = {'lat': -1.24908, 'lng': -78.61675};
+      final route = DriverRoute.fromJson(json);
+      expect(route.hasDepotCoordinates, isTrue);
+      expect(route.depotLat, -1.24908);
+      expect(route.depotLng, -78.61675);
+      expect(route.stops.single.hasCoordinates, isTrue);
+      expect(route.stops.single.deliveryLat, -1.2415);
+      expect(route.stops.single.deliveryLng, -78.6195);
+      final started = route.withConfirmedStart(DateTime.utc(2026, 10, 18, 14));
+      expect(started.hasDepotCoordinates, isTrue);
+    });
   });
 }

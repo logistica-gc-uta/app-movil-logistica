@@ -4,6 +4,7 @@ import 'dart:convert';
 import 'package:app_movil_logistica/core/network/api_client.dart';
 import 'package:app_movil_logistica/core/theme/app_theme.dart';
 import 'package:app_movil_logistica/features/auth/data/auth_session.dart';
+import 'package:app_movil_logistica/features/routes/data/external_navigation.dart';
 import 'package:app_movil_logistica/features/routes/data/routes_service.dart';
 import 'package:app_movil_logistica/features/routes/presentation/my_route_page.dart';
 import 'package:flutter/material.dart';
@@ -74,6 +75,7 @@ void main() {
     WidgetTester tester,
     Future<http.Response> Function(http.Request request) server, {
     AuthUser user = driver,
+    ExternalNavigator externalNavigator = const ExternalNavigator(),
   }) async {
     requests = [];
     // Pantalla de teléfono (411 × 914), no la superficie de 800 × 600.
@@ -91,6 +93,7 @@ void main() {
           user: user,
           routesService: RoutesService(ApiClient(httpClient: client)),
           onLogout: () {},
+          externalNavigator: externalNavigator,
         ),
       ),
     );
@@ -1067,5 +1070,74 @@ void main() {
     await tester.pumpAndSettle();
     expect(find.text('Intento fallido'), findsOneWidget);
     expect(find.text('Hola, Carlos Chofer'), findsNothing);
+  });
+
+  testWidgets('abre la ruta completa en Google Maps y la parada activa en Waze', (
+    tester,
+  ) async {
+    final launched = <Uri>[];
+    final nav = ExternalNavigator(
+      launcher: (uri) async {
+        launched.add(uri);
+        return true;
+      },
+    );
+    final payload = jsonEncode([
+      {
+        'id': 'r1',
+        'date': '2026-10-18T05:00:00Z',
+        'zone': {'id': 'z1', 'name': 'Centro', 'code': 'CEN-01'},
+        'depot': {'lat': -1.24908, 'lng': -78.61675},
+        'status': 'IN_PROGRESS',
+        'startedAt': '2026-10-18T13:00:00Z',
+        'returnedAt': null,
+        'orders': [
+          {
+            'id': 'o1',
+            'deliveryAddress': 'Calle Primera 100',
+            'deliveryLat': -1.241,
+            'deliveryLng': -78.619,
+            'status': 'ASSIGNED',
+            'scheduledDeliveryDate': null,
+            'stopOrder': 1,
+          },
+          {
+            'id': 'o2',
+            'deliveryAddress': 'Av. Segunda 200',
+            'deliveryLat': -1.245,
+            'deliveryLng': -78.622,
+            'status': 'ASSIGNED',
+            'scheduledDeliveryDate': null,
+            'stopOrder': 2,
+          },
+        ],
+        'stops': <Map<String, dynamic>>[],
+        'events': <Map<String, dynamic>>[],
+      },
+    ]);
+    await openPage(
+      tester,
+      (_) async => http.Response(payload, 200),
+      externalNavigator: nav,
+    );
+    await enterRoute(tester);
+
+    await tapVisible(tester, find.byKey(const ValueKey('open-full-route-maps')));
+    await tester.pumpAndSettle();
+    expect(launched, hasLength(1));
+    expect(launched.single.host, 'www.google.com');
+    expect(launched.single.queryParameters['waypoints'], '-1.241000,-78.619000');
+    expect(
+      launched.single.queryParameters['destination'],
+      '-1.245000,-78.622000',
+    );
+
+    await tapVisible(tester, find.byKey(const ValueKey('navigate-stop-o1')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const ValueKey('nav-app-waze')));
+    await tester.pumpAndSettle();
+    expect(launched, hasLength(2));
+    expect(launched.last.host, 'waze.com');
+    expect(launched.last.queryParameters['ll'], '-1.241000,-78.619000');
   });
 }

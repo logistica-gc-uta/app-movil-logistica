@@ -4,6 +4,7 @@ import 'package:app_movil_logistica/core/network/request_id.dart';
 import 'package:app_movil_logistica/core/theme/app_theme.dart';
 import 'package:app_movil_logistica/features/auth/data/auth_session.dart';
 import 'package:app_movil_logistica/features/routes/data/driver_route.dart';
+import 'package:app_movil_logistica/features/routes/data/external_navigation.dart';
 import 'package:app_movil_logistica/features/routes/data/routes_service.dart';
 import 'package:flutter/material.dart';
 
@@ -14,11 +15,13 @@ class MyRoutePage extends StatefulWidget {
     required this.user,
     required this.routesService,
     required this.onLogout,
+    this.externalNavigator = const ExternalNavigator(),
   });
 
   final AuthUser user;
   final RoutesService routesService;
   final VoidCallback onLogout;
+  final ExternalNavigator externalNavigator;
 
   @override
   State<MyRoutePage> createState() => _MyRoutePageState();
@@ -621,6 +624,71 @@ class _MyRoutePageState extends State<MyRoutePage> with WidgetsBindingObserver {
     );
   }
 
+  Future<void> _navigateToStop(DeliveryStop stop) async {
+    final app = await _pickMapApp(
+      title: 'Navegar a parada ${stop.stopOrder ?? '–'}',
+      subtitle: stop.address,
+    );
+    if (app == null || !mounted) return;
+    final messenger = ScaffoldMessenger.of(context);
+    final launched = await widget.externalNavigator.openStop(stop, app);
+    if (!mounted) return;
+    if (!launched) {
+      _notify(messenger, 'No se pudo abrir ${app.label} en este dispositivo.');
+    }
+  }
+
+  Future<void> _navigateToDepot(DriverRoute route) async {
+    if (!route.hasDepotCoordinates) return;
+    final app = await _pickMapApp(
+      title: 'Navegar al depósito',
+      subtitle: 'Regreso al punto de partida de la ruta',
+    );
+    if (app == null || !mounted) return;
+    final messenger = ScaffoldMessenger.of(context);
+    final launched = await widget.externalNavigator.openDepot(
+      lat: route.depotLat!,
+      lng: route.depotLng!,
+      app: app,
+    );
+    if (!mounted) return;
+    if (!launched) {
+      _notify(messenger, 'No se pudo abrir ${app.label} en este dispositivo.');
+    }
+  }
+
+  Future<void> _openFullRouteInMaps(DriverRoute route) async {
+    final messenger = ScaffoldMessenger.of(context);
+    final result = await widget.externalNavigator.openFullRoute(route);
+    if (!mounted) return;
+    if (!result.launched) {
+      _notify(
+        messenger,
+        'No se pudo abrir Google Maps en este dispositivo.',
+      );
+      return;
+    }
+    if (result.omittedCount > 0) {
+      _notify(
+        messenger,
+        'Se abrieron las primeras ${ExternalNavigator.maxGoogleMapsStops} '
+        'paradas pendientes en Google Maps.',
+      );
+    }
+  }
+
+  Future<ExternalMapApp?> _pickMapApp({
+    required String title,
+    required String subtitle,
+  }) => showModalBottomSheet<ExternalMapApp>(
+    context: context,
+    backgroundColor: _Tone.card,
+    shape: const RoundedRectangleBorder(
+      borderRadius: BorderRadius.vertical(top: Radius.circular(16)),
+    ),
+    builder: (_) => _NavigationAppSheet(title: title, subtitle: subtitle),
+  );
+
   Widget _buildBody(DriverRoute? open) {
     final errorMessage = _errorMessage;
     if (_isLoading) {
@@ -679,6 +747,9 @@ class _MyRoutePageState extends State<MyRoutePage> with WidgetsBindingObserver {
               onAdvance: _advance,
               onFail: (stop) => _reportFailure(open, stop),
               onArrived: _celebrateIfFinished,
+              onNavigateFullRoute: () => _openFullRouteInMaps(open),
+              onNavigateDepot: () => _navigateToDepot(open),
+              onNavigateStop: _navigateToStop,
               nextStep: _RouteNextStep(
                 isBusy:
                     _closingRouteId == open.id || _returningRouteId == open.id,
@@ -1264,6 +1335,9 @@ class _RouteStops extends StatelessWidget {
     required this.onAdvance,
     required this.onFail,
     required this.onArrived,
+    required this.onNavigateFullRoute,
+    required this.onNavigateDepot,
+    required this.onNavigateStop,
     required this.nextStep,
     required this.availability,
     required this.checkingAvailability,
@@ -1276,6 +1350,9 @@ class _RouteStops extends StatelessWidget {
   final ValueChanged<DeliveryStop> onAdvance;
   final ValueChanged<DeliveryStop> onFail;
   final VoidCallback onArrived;
+  final VoidCallback onNavigateFullRoute;
+  final VoidCallback onNavigateDepot;
+  final ValueChanged<DeliveryStop> onNavigateStop;
   final _RouteNextStep nextStep;
   final DriverAvailability? availability;
   final bool checkingAvailability;
@@ -1327,6 +1404,57 @@ class _RouteStops extends StatelessWidget {
               if (route.startedAt case final startedAt?) ...[
                 const SizedBox(height: 6),
                 _StartTime(startedAt, color: AppColors.textMuted),
+              ],
+              if (route.pendingStops.isNotEmpty) ...[
+                const SizedBox(height: 16),
+                OutlinedButton.icon(
+                  key: const ValueKey('open-full-route-maps'),
+                  onPressed: onNavigateFullRoute,
+                  icon: const Icon(Icons.map_outlined, size: 18),
+                  label: Text(
+                    route.pendingStops.length > 1
+                        ? 'Ver ruta en Google Maps (${route.pendingStops.length} pendientes)'
+                        : 'Ver parada en Google Maps',
+                  ),
+                  style: OutlinedButton.styleFrom(
+                    foregroundColor: AppColors.ink,
+                    side: BorderSide(
+                      color: AppColors.ink.withValues(alpha: 0.2),
+                    ),
+                    minimumSize: const Size.fromHeight(44),
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(10),
+                    ),
+                    textStyle: _weight(
+                      textTheme.labelLarge,
+                      FontWeight.w600,
+                      size: 14,
+                    ),
+                  ),
+                ),
+              ] else if (route.awaitsReturn && route.hasDepotCoordinates) ...[
+                const SizedBox(height: 16),
+                OutlinedButton.icon(
+                  key: const ValueKey('navigate-depot'),
+                  onPressed: onNavigateDepot,
+                  icon: const Icon(Icons.navigation_rounded, size: 18),
+                  label: const Text('Navegar al depósito (Maps / Waze)'),
+                  style: OutlinedButton.styleFrom(
+                    foregroundColor: AppColors.ink,
+                    side: BorderSide(
+                      color: AppColors.ink.withValues(alpha: 0.2),
+                    ),
+                    minimumSize: const Size.fromHeight(44),
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(10),
+                    ),
+                    textStyle: _weight(
+                      textTheme.labelLarge,
+                      FontWeight.w600,
+                      size: 14,
+                    ),
+                  ),
+                ),
               ],
             ],
           ),
@@ -1414,6 +1542,7 @@ class _RouteStops extends StatelessWidget {
             onAdvance: () => onAdvance(route.stops[i]),
             onFail: () => onFail(route.stops[i]),
             onArrived: onArrived,
+            onNavigate: () => onNavigateStop(route.stops[i]),
           ),
       ],
     );
@@ -1687,6 +1816,7 @@ class _StopItem extends StatefulWidget {
     required this.onAdvance,
     required this.onFail,
     required this.onArrived,
+    required this.onNavigate,
   });
 
   final DeliveryStop stop;
@@ -1702,6 +1832,7 @@ class _StopItem extends StatefulWidget {
 
   /// Se llama cuando el camión llega al destino tras confirmar la entrega.
   final VoidCallback onArrived;
+  final VoidCallback onNavigate;
 
   @override
   State<_StopItem> createState() => _StopItemState();
@@ -1744,6 +1875,7 @@ class _StopItemState extends State<_StopItem> {
       isLocked: widget.isLocked,
       onAdvance: widget.onAdvance,
       onFail: widget.onFail,
+      onNavigate: widget.onNavigate,
     ),
   );
 }
@@ -1759,6 +1891,7 @@ class _StopCard extends StatelessWidget {
     required this.isLocked,
     required this.onAdvance,
     required this.onFail,
+    required this.onNavigate,
   });
 
   final DeliveryStop stop;
@@ -1770,6 +1903,7 @@ class _StopCard extends StatelessWidget {
   final bool isLocked;
   final VoidCallback onAdvance;
   final VoidCallback onFail;
+  final VoidCallback onNavigate;
 
   /// Estado visible de la parada. Mientras el camión llega se mantiene el
   /// trayecto, con la misma clave, para que su animación continúe.
@@ -1895,15 +2029,22 @@ class _StopCard extends StatelessWidget {
               ),
             ),
             const SizedBox(width: 8),
-            Icon(
-              stop.isFailed
-                  ? Icons.close
-                  : stop.isDelivered
-                  ? Icons.check
-                  : Icons.lock_outline,
-              size: 16,
-              color: color,
-            ),
+            if (pending) ...[
+              IconButton(
+                key: ValueKey('navigate-stop-${stop.orderId}'),
+                onPressed: onNavigate,
+                icon: const Icon(Icons.near_me_outlined, size: 18),
+                tooltip: 'Navegar',
+                visualDensity: VisualDensity.compact,
+                color: AppColors.ink,
+              ),
+              Icon(Icons.lock_outline, size: 16, color: color),
+            ] else
+              Icon(
+                stop.isFailed ? Icons.close : Icons.check,
+                size: 16,
+                color: color,
+              ),
           ],
         ),
       );
@@ -1948,6 +2089,30 @@ class _StopCard extends StatelessWidget {
               child: _status(),
             ),
           ),
+          if (isTurn && !arriving) ...[
+            const SizedBox(height: 12),
+            OutlinedButton.icon(
+              key: ValueKey('navigate-stop-${stop.orderId}'),
+              onPressed: onNavigate,
+              icon: const Icon(Icons.navigation_rounded, size: 18),
+              label: const Text('Navegar (Maps / Waze)'),
+              style: OutlinedButton.styleFrom(
+                foregroundColor: AppColors.ink,
+                side: BorderSide(
+                  color: AppColors.ink.withValues(alpha: 0.25),
+                ),
+                minimumSize: const Size.fromHeight(44),
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(10),
+                ),
+                textStyle: _weight(
+                  textTheme.labelLarge,
+                  FontWeight.w600,
+                  size: 14,
+                ),
+              ),
+            ),
+          ],
           if (action case (
             final label,
             final icon,
@@ -2775,4 +2940,70 @@ String formatLongDate(String isoDate) {
   final weekday = _weekdays[day.weekday - 1];
   final capitalized = weekday[0].toUpperCase() + weekday.substring(1);
   return '$capitalized ${day.day} de ${_months[day.month - 1]}';
+}
+
+class _NavigationAppSheet extends StatelessWidget {
+  const _NavigationAppSheet({required this.title, required this.subtitle});
+
+  final String title;
+  final String subtitle;
+
+  @override
+  Widget build(BuildContext context) {
+    final textTheme = Theme.of(context).textTheme;
+    return SafeArea(
+      child: Padding(
+        padding: const EdgeInsets.fromLTRB(20, 16, 20, 20),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            Text(
+              title,
+              style: _weight(
+                textTheme.titleMedium,
+                FontWeight.w700,
+                size: 18,
+                color: AppColors.ink,
+              ),
+            ),
+            const SizedBox(height: 4),
+            Text(
+              subtitle,
+              maxLines: 2,
+              overflow: TextOverflow.ellipsis,
+              style: textTheme.bodySmall?.copyWith(color: AppColors.textMuted),
+            ),
+            const SizedBox(height: 16),
+            ListTile(
+              key: const ValueKey('nav-app-google-maps'),
+              leading: const Icon(Icons.map_rounded, color: AppColors.ink),
+              title: const Text('Google Maps'),
+              subtitle: const Text('Abrir ruta guiada en Google Maps'),
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(10),
+              ),
+              tileColor: _Tone.page,
+              onTap: () => Navigator.of(context).pop(ExternalMapApp.googleMaps),
+            ),
+            const SizedBox(height: 10),
+            ListTile(
+              key: const ValueKey('nav-app-waze'),
+              leading: const Icon(
+                Icons.navigation_rounded,
+                color: AppColors.ink,
+              ),
+              title: const Text('Waze'),
+              subtitle: const Text('Abrir navegación en Waze'),
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(10),
+              ),
+              tileColor: _Tone.page,
+              onTap: () => Navigator.of(context).pop(ExternalMapApp.waze),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
 }
