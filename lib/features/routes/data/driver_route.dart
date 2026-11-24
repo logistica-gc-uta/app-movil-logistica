@@ -20,6 +20,8 @@ class DeliveryStop {
     required this.address,
     required this.status,
     required this.stopOrder,
+    this.deliveryLat,
+    this.deliveryLng,
     this.stopId,
     this.isLegacy = false,
     this.outcome,
@@ -37,6 +39,12 @@ class DeliveryStop {
 
   /// Posición en la ruta; puede faltar en rutas antiguas.
   final int? stopOrder;
+
+  /// Coordenadas de entrega enviadas por el backend; pueden faltar en pedidos antiguos.
+  final double? deliveryLat;
+  final double? deliveryLng;
+
+  bool get hasCoordinates => deliveryLat != null && deliveryLng != null;
 
   /// Id de la visita (`RouteStop`). Solo las visitas verificadas lo tienen y
   /// solo con él se puede registrar un intento fallido.
@@ -74,6 +82,8 @@ class DriverRoute {
     required this.id,
     required this.status,
     required this.stops,
+    this.depotLat,
+    this.depotLng,
     this.startedAt,
     this.completedAt,
     this.returnedAt,
@@ -81,6 +91,8 @@ class DriverRoute {
   });
 
   factory DriverRoute.fromJson(Map<String, dynamic> json) {
+    final depot = json['depot'] as Map<String, dynamic>?;
+
     // El resultado de cada visita viene en `stops`; lo cruzamos por pedido.
     final visits = <String, Map<String, dynamic>>{
       for (final stop
@@ -98,6 +110,8 @@ class DriverRoute {
         address: order['deliveryAddress'] as String,
         status: order['status'] as String,
         stopOrder: order['stopOrder'] as int?,
+        deliveryLat: (order['deliveryLat'] as num?)?.toDouble(),
+        deliveryLng: (order['deliveryLng'] as num?)?.toDouble(),
         stopId: visit?['id'] as String?,
         isLegacy: visit?['isLegacy'] as bool? ?? false,
         outcome: visit?['outcome'] as String?,
@@ -114,6 +128,8 @@ class DriverRoute {
       id: json['id'] as String,
       status: json['status'] as String,
       stops: stops,
+      depotLat: (depot?['lat'] as num?)?.toDouble(),
+      depotLng: (depot?['lng'] as num?)?.toDouble(),
       startedAt: _instant(json['startedAt']),
       completedAt: _instant(json['completedAt']),
       returnedAt: _instant(json['returnedAt']),
@@ -127,12 +143,19 @@ class DriverRoute {
   /// o INTERRUPTED. La app no usa zonas: el backend las dejó de exigir.
   final String status;
   final List<DeliveryStop> stops;
+  final double? depotLat;
+  final double? depotLng;
   final DateTime? startedAt;
   final DateTime? completedAt;
   final DateTime? returnedAt;
 
   /// Motivo que dio la administración al interrumpir la ruta.
   final String? interruptionReason;
+
+  bool get hasDepotCoordinates => depotLat != null && depotLng != null;
+
+  List<DeliveryStop> get pendingStops =>
+      stops.where((stop) => !stop.isDelivered && !stop.isFailed).toList();
 
   DriverRoute _copy({
     String? status,
@@ -143,6 +166,8 @@ class DriverRoute {
     id: id,
     status: status ?? this.status,
     stops: stops,
+    depotLat: depotLat,
+    depotLng: depotLng,
     startedAt: startedAt ?? this.startedAt,
     completedAt: completedAt ?? this.completedAt,
     returnedAt: returnedAt ?? this.returnedAt,

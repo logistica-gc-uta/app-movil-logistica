@@ -16,6 +16,7 @@ class StopTile extends StatelessWidget {
     required this.isLocked,
     required this.onAdvance,
     required this.onFail,
+    required this.onNavigate,
   });
 
   final DeliveryStop stop;
@@ -27,6 +28,7 @@ class StopTile extends StatelessWidget {
   final bool isLocked;
   final VoidCallback onAdvance;
   final VoidCallback onFail;
+  final VoidCallback onNavigate;
 
   @override
   Widget build(BuildContext context) =>
@@ -118,15 +120,24 @@ class StopTile extends StatelessWidget {
               ],
             ),
           ),
-          if (!stop.isDelivered && !stop.isFailed)
+          if (!stop.isDelivered && !stop.isFailed) ...[
+            IconButton(
+              key: ValueKey('navigate-stop-${stop.orderId}'),
+              onPressed: onNavigate,
+              icon: const Icon(Icons.near_me_outlined, size: 18),
+              tooltip: 'Navegar',
+              visualDensity: VisualDensity.compact,
+              color: RouteTone.ink,
+            ),
             Padding(
-              padding: const EdgeInsets.only(top: 8, left: 8),
+              padding: const EdgeInsets.only(top: 10, left: 2),
               child: Icon(
                 Icons.lock_outline_rounded,
                 size: 16,
                 color: markerColor.withValues(alpha: 0.7),
               ),
             ),
+          ],
         ],
       ),
     );
@@ -164,7 +175,15 @@ class StopTile extends StatelessWidget {
               ),
             ),
           ],
-          const SizedBox(height: 22),
+          const SizedBox(height: 16),
+          RouteOutlineButton(
+            key: ValueKey('navigate-stop-${stop.orderId}'),
+            label: 'Navegar (Maps / Waze)',
+            icon: Icons.navigation_rounded,
+            color: Colors.white,
+            onPressed: onNavigate,
+          ),
+          const SizedBox(height: 12),
           if (stop.status == 'ASSIGNED')
             RouteActionButton(
               label: 'En camino',

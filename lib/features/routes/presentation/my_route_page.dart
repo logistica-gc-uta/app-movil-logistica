@@ -2,6 +2,7 @@ import 'package:app_movil_logistica/core/network/request_id.dart';
 import 'package:app_movil_logistica/core/theme/app_theme.dart';
 import 'package:app_movil_logistica/features/auth/data/auth_session.dart';
 import 'package:app_movil_logistica/features/routes/data/driver_route.dart';
+import 'package:app_movil_logistica/features/routes/data/external_navigation.dart';
 import 'package:app_movil_logistica/features/routes/data/routes_service.dart';
 import 'package:app_movil_logistica/features/routes/presentation/route_card.dart';
 import 'package:app_movil_logistica/features/routes/presentation/route_detail.dart';
@@ -21,11 +22,13 @@ class MyRoutePage extends StatefulWidget {
     required this.user,
     required this.routesService,
     required this.onLogout,
+    this.externalNavigator = const ExternalNavigator(),
   });
 
   final AuthUser user;
   final RoutesService routesService;
   final VoidCallback onLogout;
+  final ExternalNavigator externalNavigator;
 
   @override
   State<MyRoutePage> createState() => _MyRoutePageState();
@@ -579,6 +582,71 @@ class _MyRoutePageState extends State<MyRoutePage> with WidgetsBindingObserver {
     );
   }
 
+  Future<void> _navigateToStop(DeliveryStop stop) async {
+    final app = await _pickMapApp(
+      title: 'Navegar a parada ${stop.stopOrder ?? '–'}',
+      subtitle: stop.address,
+    );
+    if (app == null || !mounted) return;
+    final messenger = ScaffoldMessenger.of(context);
+    final launched = await widget.externalNavigator.openStop(stop, app);
+    if (!mounted) return;
+    if (!launched) {
+      _notify(messenger, 'No se pudo abrir ${app.label} en este dispositivo.');
+    }
+  }
+
+  Future<void> _navigateToDepot(DriverRoute route) async {
+    if (!route.hasDepotCoordinates) return;
+    final app = await _pickMapApp(
+      title: 'Navegar al depósito',
+      subtitle: 'Regreso al punto de partida de la ruta',
+    );
+    if (app == null || !mounted) return;
+    final messenger = ScaffoldMessenger.of(context);
+    final launched = await widget.externalNavigator.openDepot(
+      lat: route.depotLat!,
+      lng: route.depotLng!,
+      app: app,
+    );
+    if (!mounted) return;
+    if (!launched) {
+      _notify(messenger, 'No se pudo abrir ${app.label} en este dispositivo.');
+    }
+  }
+
+  Future<void> _openFullRouteInMaps(DriverRoute route) async {
+    final messenger = ScaffoldMessenger.of(context);
+    final result = await widget.externalNavigator.openFullRoute(route);
+    if (!mounted) return;
+    if (!result.launched) {
+      _notify(
+        messenger,
+        'No se pudo abrir Google Maps en este dispositivo.',
+      );
+      return;
+    }
+    if (result.omittedCount > 0) {
+      _notify(
+        messenger,
+        'Se abrieron las primeras ${ExternalNavigator.maxGoogleMapsStops} '
+        'paradas pendientes en Google Maps.',
+      );
+    }
+  }
+
+  Future<ExternalMapApp?> _pickMapApp({
+    required String title,
+    required String subtitle,
+  }) => showModalBottomSheet<ExternalMapApp>(
+    context: context,
+    backgroundColor: Colors.white,
+    shape: const RoundedRectangleBorder(
+      borderRadius: BorderRadius.vertical(top: Radius.circular(14)),
+    ),
+    builder: (_) => _NavigationAppSheet(title: title, subtitle: subtitle),
+  );
+
   Widget _buildBody(DriverRoute? open) {
     final errorMessage = _errorMessage;
     if (_isLoading) {
@@ -637,6 +705,9 @@ class _MyRoutePageState extends State<MyRoutePage> with WidgetsBindingObserver {
               isLocked: _isMutating || _needsRefresh,
               onAdvance: _advance,
               onFail: (stop) => _reportFailure(open, stop),
+              onNavigateFullRoute: () => _openFullRouteInMaps(open),
+              onNavigateDepot: () => _navigateToDepot(open),
+              onNavigateStop: _navigateToStop,
               nextStep: _nextStep(open),
               availability: _availability,
               checkingAvailability: _checkingAvailability,
@@ -797,6 +868,64 @@ class _LogoutBar extends StatelessWidget {
               ),
             ],
           ),
+        ),
+      ),
+    );
+  }
+}
+
+class _NavigationAppSheet extends StatelessWidget {
+  const _NavigationAppSheet({required this.title, required this.subtitle});
+
+  final String title;
+  final String subtitle;
+
+  @override
+  Widget build(BuildContext context) {
+    final textTheme = Theme.of(context).textTheme;
+    return SafeArea(
+      child: Padding(
+        padding: const EdgeInsets.fromLTRB(24, 16, 24, 24),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            Text(title, style: display(context, size: 18)),
+            const SizedBox(height: 4),
+            Text(
+              subtitle,
+              maxLines: 2,
+              overflow: TextOverflow.ellipsis,
+              style: textTheme.bodySmall?.copyWith(color: RouteTone.muted),
+            ),
+            const SizedBox(height: 16),
+            ListTile(
+              key: const ValueKey('nav-app-google-maps'),
+              leading: const Icon(Icons.map_outlined, color: RouteTone.ink),
+              title: const Text('Google Maps'),
+              subtitle: const Text('Abrir ruta guiada en Google Maps'),
+              shape: const RoundedRectangleBorder(
+                borderRadius: RouteRadius.tile,
+              ),
+              tileColor: RouteTone.surface,
+              onTap: () => Navigator.of(context).pop(ExternalMapApp.googleMaps),
+            ),
+            const SizedBox(height: 10),
+            ListTile(
+              key: const ValueKey('nav-app-waze'),
+              leading: const Icon(
+                Icons.navigation_rounded,
+                color: RouteTone.ink,
+              ),
+              title: const Text('Waze'),
+              subtitle: const Text('Abrir navegación en Waze'),
+              shape: const RoundedRectangleBorder(
+                borderRadius: RouteRadius.tile,
+              ),
+              tileColor: RouteTone.surface,
+              onTap: () => Navigator.of(context).pop(ExternalMapApp.waze),
+            ),
+          ],
         ),
       ),
     );

@@ -16,6 +16,9 @@ class RouteDetail extends StatelessWidget {
     required this.isLocked,
     required this.onAdvance,
     required this.onFail,
+    required this.onNavigateFullRoute,
+    required this.onNavigateDepot,
+    required this.onNavigateStop,
     required this.nextStep,
     required this.availability,
     required this.checkingAvailability,
@@ -28,6 +31,9 @@ class RouteDetail extends StatelessWidget {
   final bool isLocked;
   final ValueChanged<DeliveryStop> onAdvance;
   final ValueChanged<DeliveryStop> onFail;
+  final VoidCallback onNavigateFullRoute;
+  final VoidCallback onNavigateDepot;
+  final ValueChanged<DeliveryStop> onNavigateStop;
   final RouteNextStep nextStep;
   final DriverAvailability? availability;
   final bool checkingAvailability;
@@ -86,6 +92,27 @@ class RouteDetail extends StatelessWidget {
             ],
           ),
         ],
+        if (route.pendingStops.isNotEmpty) ...[
+          const SizedBox(height: 16),
+          RouteOutlineButton(
+            key: const ValueKey('open-full-route-maps'),
+            label: route.pendingStops.length > 1
+                ? 'Ver ruta en Google Maps (${route.pendingStops.length} pendientes)'
+                : 'Ver parada en Google Maps',
+            icon: Icons.map_outlined,
+            color: RouteTone.ink,
+            onPressed: onNavigateFullRoute,
+          ),
+        ] else if (route.awaitsReturn && route.hasDepotCoordinates) ...[
+          const SizedBox(height: 16),
+          RouteOutlineButton(
+            key: const ValueKey('navigate-depot'),
+            label: 'Navegar al depósito (Maps / Waze)',
+            icon: Icons.navigation_rounded,
+            color: RouteTone.ink,
+            onPressed: onNavigateDepot,
+          ),
+        ],
         if (hint != null) ...[const SizedBox(height: 22), RouteNotice(hint)],
         if (nextStep.of(route) case (
           final onPressed,
@@ -138,6 +165,7 @@ class RouteDetail extends StatelessWidget {
             isLocked: isLocked,
             onAdvance: () => onAdvance(route.stops[i]),
             onFail: () => onFail(route.stops[i]),
+            onNavigate: () => onNavigateStop(route.stops[i]),
           ),
           if (_isTurn(turn, i)) const SizedBox(height: 8),
         ],
