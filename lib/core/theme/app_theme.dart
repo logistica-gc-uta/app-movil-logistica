@@ -89,7 +89,7 @@ class AppSpacing {
 }
 
 class AppRadius {
-  static const button = BorderRadius.all(Radius.circular(10));
+  static const button = BorderRadius.all(Radius.circular(6));
 }
 
 TextStyle _style(

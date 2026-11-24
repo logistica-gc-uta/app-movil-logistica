@@ -286,7 +286,7 @@ class _MyRoutePageState extends State<MyRoutePage> with WidgetsBindingObserver {
       isScrollControlled: true,
       backgroundColor: Colors.white,
       shape: const RoundedRectangleBorder(
-        borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
+        borderRadius: BorderRadius.vertical(top: Radius.circular(12)),
       ),
       builder: (_) => FailedVisitSheet(
         address: stop.address,

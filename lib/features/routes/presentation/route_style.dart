@@ -26,9 +26,9 @@ class RouteTone {
 }
 
 class RouteRadius {
-  static const card = BorderRadius.all(Radius.circular(18));
-  static const tile = BorderRadius.all(Radius.circular(14));
-  static const chip = BorderRadius.all(Radius.circular(8));
+  static const card = BorderRadius.all(Radius.circular(8));
+  static const tile = BorderRadius.all(Radius.circular(6));
+  static const chip = BorderRadius.all(Radius.circular(4));
 }
 
 /// Inter es variable: el grosor también se indica como variación.
