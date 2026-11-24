@@ -18,7 +18,6 @@ Map<String, dynamic> routeJson({
   return {
     'id': 'r1',
     'date': '2026-10-18T05:00:00Z',
-    'zone': {'id': 'z1', 'name': 'Centro', 'code': 'CEN-01'},
     'status': 'IN_PROGRESS',
     'orders': orders,
     'startedAt': '2026-10-18T13:00:00Z',
@@ -42,7 +41,7 @@ void main() {
       expect(started.isInProgress, isTrue);
       expect(started.stops.map((s) => s.orderId), ['o1', 'o2']);
       expect(started.startedAt, DateTime.utc(2026, 10, 18, 14));
-      expect(started.zoneName, route.zoneName);
+      expect(started.stops.length, route.stops.length);
     },
   );
 
@@ -52,13 +51,11 @@ void main() {
     expect(route.startedAt, isNull);
     expect(route.returnedAt, isNull);
   });
-  test('lee la zona, el estado y las paradas de la respuesta', () {
+  test('lee el estado y las paradas de la respuesta', () {
     final route = DriverRoute.fromJson(
       routeJson(orders: [order('o1', 1, 'ASSIGNED')]),
     );
 
-    expect(route.zoneName, 'Centro');
-    expect(route.zoneCode, 'CEN-01');
     expect(route.isInProgress, true);
     expect(route.stops.single.address, 'Calle o1');
   });
@@ -201,12 +198,12 @@ void main() {
       'attempts': attempts,
     };
 
-    test('ruta sin zona (era de cobertura) no rompe la lectura', () {
+    test('ignora la zona si el servidor todavía la envía', () {
       final json = routeJson(orders: [order('o1', 1, 'ASSIGNED')])
-        ..['zone'] = null;
-      final route = DriverRoute.fromJson(json);
-      expect(route.zoneName, 'Ruta sin zona');
-      expect(route.zoneCode, isNull);
+        ..['zone'] = {'id': 'z1', 'name': 'Centro', 'code': 'C1'};
+      expect(DriverRoute.fromJson(json).stops, hasLength(1));
+      json['zone'] = null;
+      expect(DriverRoute.fromJson(json).stops, hasLength(1));
     });
 
     test('lee el id de la visita y el motivo del intento fallido', () {

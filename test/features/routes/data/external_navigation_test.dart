@@ -22,8 +22,6 @@ DeliveryStop makeStop(
 DriverRoute makeRoute(List<DeliveryStop> stops) => DriverRoute(
   id: 'r1',
   status: 'IN_PROGRESS',
-  zoneName: 'Centro',
-  zoneCode: 'CEN-01',
   stops: stops,
   depotLat: -1.24908,
   depotLng: -78.61675,

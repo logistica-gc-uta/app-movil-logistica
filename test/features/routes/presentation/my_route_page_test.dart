@@ -7,6 +7,7 @@ import 'package:app_movil_logistica/features/auth/data/auth_session.dart';
 import 'package:app_movil_logistica/features/routes/data/external_navigation.dart';
 import 'package:app_movil_logistica/features/routes/data/routes_service.dart';
 import 'package:app_movil_logistica/features/routes/presentation/my_route_page.dart';
+import 'package:app_movil_logistica/features/routes/presentation/route_parts.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:http/http.dart' as http;
@@ -29,7 +30,6 @@ String routesJson({
     {
       'id': 'r1',
       'date': '2026-10-18T05:00:00Z',
-      'zone': {'id': 'z1', 'name': 'Centro', 'code': 'CEN-01'},
       'status': routeStatus,
       'startedAt': startedAt,
       'returnedAt': returnedAt,
@@ -204,7 +204,7 @@ void main() {
       expect(find.text('Calle Primera 100'), findsOneWidget);
       expect(find.text('0 de 2 entregados'), findsOneWidget);
       // La causa y la instrucción comparten un único aviso de recuperación.
-      expect(find.byIcon(Icons.info_rounded), findsOneWidget);
+      expect(find.byType(RouteNotice), findsOneWidget);
       expect(find.byTooltip('Reintentar'), findsOneWidget);
       expect(
         tester
@@ -288,7 +288,7 @@ void main() {
     tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.paused);
     tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.resumed);
     await tester.pumpAndSettle();
-    expect(find.text('Centro'), findsOneWidget);
+    expect(find.text('2 paradas'), findsOneWidget);
     expect(find.textContaining('rutas inválidas'), findsOneWidget);
     invalid = false;
     await tapVisible(tester, find.byTooltip('Actualizar estado'));
@@ -447,7 +447,7 @@ void main() {
       expect(find.text('Iniciar ruta'), findsNothing);
       // Solo la parada 1 está en turno; la 2 espera.
       expect(find.text('En camino'), findsOneWidget);
-      expect(find.byIcon(Icons.lock_outline), findsOneWidget);
+      expect(find.byIcon(Icons.lock_outline_rounded), findsOneWidget);
       expect(
         tester.getTopLeft(find.text('Calle Primera 100')).dy,
         lessThan(tester.getTopLeft(find.text('Av. Segunda 200')).dy),
@@ -477,7 +477,7 @@ void main() {
     await tester.pump();
     expect(requests.where((r) => r.method == 'POST'), hasLength(1));
     expect(find.text('Iniciando…'), findsOneWidget);
-    expect(tester.widget<FilledButton>(start).onPressed, isNull);
+    expect(tester.widget<RouteActionButton>(start).onPressed, isNull);
     expect(find.text('Ruta iniciada.'), findsNothing);
     expect(find.text('En camino'), findsNothing);
     status = 'IN_PROGRESS';
@@ -561,7 +561,7 @@ void main() {
     await tester.tap(find.text('Iniciar ruta'));
     await tester.pumpAndSettle();
     expect(find.text('Iniciar ruta'), findsNothing);
-    expect(find.text('Centro'), findsOneWidget);
+    expect(find.text('2 paradas'), findsOneWidget);
     expect(
       find.text(
         'Actualiza la lista antes de volver a intentar iniciar una ruta.',
@@ -710,7 +710,7 @@ void main() {
         200,
       ),
     );
-    await tester.tap(find.byKey(const ValueKey('flip-route-r1')));
+    await tester.tap(find.text('Ver paradas'));
     await tester.pumpAndSettle();
 
     final first = tester.getTopLeft(find.text('Calle Primera 100'));
@@ -936,7 +936,7 @@ void main() {
     expect(find.textContaining('Disponible al terminar'), findsNothing);
   });
 
-  testWidgets('la tarjeta gira y muestra las paradas resumidas', (
+  testWidgets('una ruta asignada deja revisar sus paradas sin acciones', (
     tester,
   ) async {
     await openPage(
@@ -946,17 +946,17 @@ void main() {
         200,
       ),
     );
-    final flip = find.byKey(const ValueKey('flip-route-r1'));
     expect(find.text('Calle Primera 100'), findsNothing);
-    await tester.tap(flip);
+    await tester.tap(find.text('Ver paradas'));
     await tester.pumpAndSettle();
     expect(find.text('Calle Primera 100'), findsOneWidget);
     expect(find.text('Av. Segunda 200'), findsOneWidget);
-    expect(find.text('Iniciar ruta'), findsOneWidget);
-    await tester.tap(flip);
+    expect(find.text('En camino'), findsNothing);
+    expect(find.text('No se pudo entregar'), findsNothing);
+    await tester.tap(find.text('Regresar'));
     await tester.pumpAndSettle();
     expect(find.text('Calle Primera 100'), findsNothing);
-    expect(find.text('0 de 2 entregados'), findsOneWidget);
+    expect(find.text('Iniciar ruta'), findsOneWidget);
   });
 
   testWidgets('Regresar vuelve a las rutas del día', (tester) async {
@@ -1027,18 +1027,11 @@ void main() {
     await tapVisible(tester, find.text('Entregado'));
   }
 
-  testWidgets('al entregar, el camión llega antes de mostrar el resultado', (
-    tester,
-  ) async {
+  testWidgets('al entregar, la parada muestra su resultado', (tester) async {
     await openLastStop(tester, firstOutcome: 'SUCCESSFUL');
-    for (var i = 0; i < 5; i++) {
-      await tester.pump(const Duration(milliseconds: 50));
-    }
-    expect(find.text('Llegando al destino'), findsOneWidget);
-    expect(find.text('Entregado con éxito'), findsOneWidget);
     await tester.pumpAndSettle();
-    expect(find.text('Llegando al destino'), findsNothing);
     expect(find.text('Entregado con éxito'), findsNWidgets(2));
+    expect(find.text('Llevando el paquete a esta parada'), findsNothing);
   });
 
   testWidgets('la última entrega confirma la ruta y la marca en su tarjeta', (

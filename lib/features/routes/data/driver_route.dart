@@ -81,8 +81,6 @@ class DriverRoute {
   const DriverRoute({
     required this.id,
     required this.status,
-    required this.zoneName,
-    required this.zoneCode,
     required this.stops,
     this.depotLat,
     this.depotLng,
@@ -93,8 +91,6 @@ class DriverRoute {
   });
 
   factory DriverRoute.fromJson(Map<String, dynamic> json) {
-    // Las rutas de la era de cobertura de tienda pueden no tener zona.
-    final zone = json['zone'] as Map<String, dynamic>?;
     final depot = json['depot'] as Map<String, dynamic>?;
 
     // El resultado de cada visita viene en `stops`; lo cruzamos por pedido.
@@ -131,8 +127,6 @@ class DriverRoute {
     return DriverRoute(
       id: json['id'] as String,
       status: json['status'] as String,
-      zoneName: zone?['name'] as String? ?? 'Ruta sin zona',
-      zoneCode: zone?['code'] as String?,
       stops: stops,
       depotLat: (depot?['lat'] as num?)?.toDouble(),
       depotLng: (depot?['lng'] as num?)?.toDouble(),
@@ -146,10 +140,8 @@ class DriverRoute {
   final String id;
 
   /// Estado de la ruta: UNVERIFIED, DRAFT, ASSIGNED, IN_PROGRESS, COMPLETED
-  /// o INTERRUPTED.
+  /// o INTERRUPTED. La app no usa zonas: el backend las dejó de exigir.
   final String status;
-  final String zoneName;
-  final String? zoneCode;
   final List<DeliveryStop> stops;
   final double? depotLat;
   final double? depotLng;
@@ -173,8 +165,6 @@ class DriverRoute {
   }) => DriverRoute(
     id: id,
     status: status ?? this.status,
-    zoneName: zoneName,
-    zoneCode: zoneCode,
     stops: stops,
     depotLat: depotLat,
     depotLng: depotLng,
