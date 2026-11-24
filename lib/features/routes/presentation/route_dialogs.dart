@@ -1,4 +1,3 @@
-import 'package:app_movil_logistica/core/theme/app_theme.dart';
 import 'package:app_movil_logistica/features/routes/data/driver_route.dart';
 import 'package:app_movil_logistica/features/routes/presentation/route_formatters.dart';
 import 'package:app_movil_logistica/features/routes/presentation/route_style.dart';
@@ -308,18 +307,12 @@ class FinishedDialog extends StatelessWidget {
   }
 }
 
-/// Barra de título de la zona privada: la marca y, a la derecha, una acción.
+/// Barra de título de la zona privada: la marca y, si hace falta, actualizar.
 class RouteTopBar extends StatelessWidget implements PreferredSizeWidget {
-  const RouteTopBar({
-    super.key,
-    required this.onBack,
-    required this.onLogout,
-    required this.onRefresh,
-  });
+  const RouteTopBar({super.key, required this.onBack, required this.onRefresh});
 
   /// Si no es null, se muestra «Regresar» en lugar de la marca.
   final VoidCallback? onBack;
-  final VoidCallback onLogout;
 
   /// Si no es null, se ofrece actualizar el estado.
   final VoidCallback? onRefresh;
@@ -334,10 +327,32 @@ class RouteTopBar extends StatelessWidget implements PreferredSizeWidget {
       backgroundColor: RouteTone.page,
       surfaceTintColor: Colors.transparent,
       toolbarHeight: 64,
-      titleSpacing: AppSpacing.page - 8,
+      titleSpacing: pagePadding - 8,
       automaticallyImplyLeading: false,
       title: onBack == null
-          ? Text('SPEEDRUN', style: display(context, size: 16))
+          ? Padding(
+              padding: const EdgeInsets.only(left: 8),
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Container(
+                    width: 30,
+                    height: 30,
+                    decoration: const BoxDecoration(
+                      color: RouteTone.ink,
+                      borderRadius: RouteRadius.chip,
+                    ),
+                    child: const Icon(
+                      Icons.bolt_rounded,
+                      size: 20,
+                      color: Colors.white,
+                    ),
+                  ),
+                  const SizedBox(width: 10),
+                  Text('SPEEDRUN', style: display(context, size: 16)),
+                ],
+              ),
+            )
           : TextButton.icon(
               onPressed: onBack,
               icon: const Icon(Icons.arrow_back_rounded, size: 22),
@@ -355,23 +370,7 @@ class RouteTopBar extends StatelessWidget implements PreferredSizeWidget {
             icon: const Icon(Icons.refresh_rounded),
             tooltip: 'Actualizar estado',
           ),
-        if (onBack == null)
-          Padding(
-            padding: const EdgeInsets.only(right: 12),
-            child: IconButton(
-              onPressed: onLogout,
-              icon: const Icon(Icons.logout_rounded, size: 20),
-              tooltip: 'Cerrar sesión',
-              style: IconButton.styleFrom(
-                foregroundColor: RouteTone.ink,
-                backgroundColor: RouteTone.surface,
-                fixedSize: const Size(44, 44),
-                shape: const RoundedRectangleBorder(
-                  borderRadius: AppRadius.button,
-                ),
-              ),
-            ),
-          ),
+        const SizedBox(width: 8),
       ],
     );
   }

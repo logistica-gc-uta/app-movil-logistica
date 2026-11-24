@@ -78,6 +78,20 @@ class RouteCard extends StatelessWidget {
         children: [
           Row(
             children: [
+              Container(
+                width: 34,
+                height: 34,
+                margin: const EdgeInsets.only(right: 12),
+                decoration: const BoxDecoration(
+                  color: RouteTone.ink,
+                  borderRadius: RouteRadius.chip,
+                ),
+                child: const Icon(
+                  Icons.route_rounded,
+                  size: 19,
+                  color: Colors.white,
+                ),
+              ),
               Expanded(
                 child: Text(
                   route.allStopsResolved

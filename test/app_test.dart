@@ -165,7 +165,7 @@ void main() {
     await openApp(tester);
     await login(tester);
 
-    await tester.tap(find.byTooltip('Cerrar sesión'));
+    await tester.tap(find.text('Cerrar sesión'));
     await tester.pumpAndSettle();
     expect(find.text('INICIAR SESIÓN'), findsOneWidget);
 

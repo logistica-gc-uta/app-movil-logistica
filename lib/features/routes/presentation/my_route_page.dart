@@ -1,4 +1,5 @@
 import 'package:app_movil_logistica/core/network/request_id.dart';
+import 'package:app_movil_logistica/core/theme/app_theme.dart';
 import 'package:app_movil_logistica/features/auth/data/auth_session.dart';
 import 'package:app_movil_logistica/features/routes/data/driver_route.dart';
 import 'package:app_movil_logistica/features/routes/data/routes_service.dart';
@@ -563,12 +564,17 @@ class _MyRoutePageState extends State<MyRoutePage> with WidgetsBindingObserver {
         backgroundColor: RouteTone.page,
         appBar: RouteTopBar(
           onBack: open == null ? null : _closeRoute,
-          onLogout: widget.onLogout,
           onRefresh: _errorMessage != null && _routes.isNotEmpty && !_isMutating
               ? _load
               : null,
         ),
-        body: _buildBody(open),
+        body: Column(
+          children: [
+            Expanded(child: _buildBody(open)),
+            if (open == null && !_isLoading)
+              _LogoutBar(name: widget.user.name, onLogout: widget.onLogout),
+          ],
+        ),
       ),
     );
   }
@@ -683,13 +689,115 @@ class _Greeting extends StatelessWidget {
   Widget build(BuildContext context) {
     return Padding(
       padding: const EdgeInsets.only(top: 12),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.center,
         children: [
-          Text(formatLongDate(date).toUpperCase(), style: overline(context)),
-          const SizedBox(height: 10),
-          Text('Hola, $name', style: display(context, size: 26)),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  formatLongDate(date).toUpperCase(),
+                  style: overline(context),
+                ),
+                const SizedBox(height: 10),
+                Text('Hola, $name', style: display(context, size: 26)),
+              ],
+            ),
+          ),
+          const SizedBox(width: 16),
+          Container(
+            width: 48,
+            height: 48,
+            alignment: Alignment.center,
+            decoration: const BoxDecoration(
+              color: RouteTone.ink,
+              borderRadius: RouteRadius.tile,
+            ),
+            child: Text(
+              _initials(name),
+              style: display(context, size: 16, color: Colors.white),
+            ),
+          ),
         ],
+      ),
+    );
+  }
+}
+
+/// Iniciales de las dos primeras palabras del nombre.
+String _initials(String name) {
+  final words = name.trim().split(RegExp(r'\s+')).where((w) => w.isNotEmpty);
+  return words.take(2).map((w) => w[0].toUpperCase()).join();
+}
+
+/// Pie de la pantalla de rutas: quién tiene la sesión y cómo cerrarla.
+class _LogoutBar extends StatelessWidget {
+  const _LogoutBar({required this.name, required this.onLogout});
+
+  final String name;
+  final VoidCallback onLogout;
+
+  @override
+  Widget build(BuildContext context) {
+    final textTheme = Theme.of(context).textTheme;
+    return Container(
+      decoration: const BoxDecoration(
+        border: Border(top: BorderSide(color: RouteTone.line)),
+      ),
+      child: SafeArea(
+        top: false,
+        child: Padding(
+          padding: const EdgeInsets.fromLTRB(pagePadding, 12, pagePadding, 12),
+          child: Row(
+            children: [
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      'Sesión iniciada',
+                      style: textTheme.bodySmall?.copyWith(
+                        color: RouteTone.muted,
+                      ),
+                    ),
+                    Text(
+                      name,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: weighted(
+                        textTheme.bodyMedium,
+                        FontWeight.w700,
+                        color: RouteTone.ink,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              const SizedBox(width: 12),
+              OutlinedButton.icon(
+                key: const ValueKey('logout'),
+                onPressed: onLogout,
+                icon: const Icon(Icons.logout_rounded, size: 18),
+                label: const Text('Cerrar sesión'),
+                style: OutlinedButton.styleFrom(
+                  foregroundColor: RouteTone.ink,
+                  side: const BorderSide(color: RouteTone.track),
+                  minimumSize: const Size(0, 46),
+                  padding: const EdgeInsets.symmetric(horizontal: 16),
+                  shape: const RoundedRectangleBorder(
+                    borderRadius: AppRadius.button,
+                  ),
+                  textStyle: weighted(
+                    textTheme.labelLarge,
+                    FontWeight.w600,
+                    size: 14,
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ),
       ),
     );
   }
