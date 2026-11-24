@@ -6,6 +6,7 @@ import 'package:app_movil_logistica/core/theme/app_theme.dart';
 import 'package:app_movil_logistica/features/auth/data/auth_session.dart';
 import 'package:app_movil_logistica/features/routes/data/routes_service.dart';
 import 'package:app_movil_logistica/features/routes/presentation/my_route_page.dart';
+import 'package:app_movil_logistica/features/routes/presentation/route_parts.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:http/http.dart' as http;
@@ -32,7 +33,6 @@ class _Server {
   }
 
   String status;
-  Map<String, dynamic>? zone = {'id': 'z1', 'name': 'Centro', 'code': 'C1'};
   Map<String, dynamic>? emergency;
   final orders = <String, String>{};
   final outcomes = <String, String>{};
@@ -71,7 +71,6 @@ class _Server {
       {
         'id': 'r1',
         'date': '2026-11-17T05:00:00Z',
-        'zone': zone,
         'status': status,
         'startedAt': '2026-11-17T13:00:00.000Z',
         'completedAt': completedAt,
@@ -529,7 +528,7 @@ void main() {
       await tester.pump();
       expect(
         tester
-            .widget<FilledButton>(
+            .widget<RouteActionButton>(
               find.byKey(const ValueKey('complete-route-r1')),
             )
             .onPressed,
@@ -663,12 +662,11 @@ void main() {
     expect(find.textContaining('la administración gestiona'), findsOneWidget);
   });
 
-  testWidgets('una ruta sin zona se muestra sin romper la lista', (
-    tester,
-  ) async {
-    final server = _Server(stops: [('o1', 'ASSIGNED', 'PENDING')])..zone = null;
+  testWidgets('la lista no menciona zonas: solo paradas', (tester) async {
+    final server = _Server(stops: [('o1', 'ASSIGNED', 'PENDING')]);
     await openPage(tester, server);
-    expect(find.text('Ruta sin zona'), findsOneWidget);
-    expect(find.text('No se pudieron cargar tus rutas'), findsNothing);
+    expect(find.text('1 parada'), findsOneWidget);
+    expect(find.textContaining('zona', findRichText: true), findsNothing);
+    expect(find.textContaining('Zona', findRichText: true), findsNothing);
   });
 }

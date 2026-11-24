@@ -191,6 +191,14 @@ ThemeData buildAppTheme({bool invertBrand = false}) {
       ),
     ),
     progressIndicatorTheme: ProgressIndicatorThemeData(color: primary),
+    // Avisos flotantes negros y redondeados, como el botón principal.
+    snackBarTheme: SnackBarThemeData(
+      behavior: SnackBarBehavior.floating,
+      backgroundColor: AppColors.ink,
+      contentTextStyle: textTheme.bodyMedium?.copyWith(color: Colors.white),
+      insetPadding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
+      shape: const RoundedRectangleBorder(borderRadius: AppRadius.button),
+    ),
     extensions: [invertBrand ? BrandColors.inverted : BrandColors.normal],
   );
 }
