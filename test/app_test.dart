@@ -165,7 +165,7 @@ void main() {
     await openApp(tester);
     await login(tester);
 
-    await tester.tap(find.byIcon(Icons.logout));
+    await tester.tap(find.text('Cerrar sesión'));
     await tester.pumpAndSettle();
     expect(find.text('INICIAR SESIÓN'), findsOneWidget);
 
@@ -213,7 +213,6 @@ void main() {
                 {
                   'id': 'r1',
                   'status': 'IN_PROGRESS',
-                  'zone': {'name': 'DEMO', 'code': 'DEMO'},
                   'orders': [
                     {
                       'id': 'o1',
@@ -271,12 +270,7 @@ void main() {
         }
         return http.Response(
           jsonEncode([
-            {
-              'id': 'r1',
-              'status': 'ASSIGNED',
-              'zone': {'name': 'DEMO', 'code': 'DEMO'},
-              'orders': [],
-            },
+            {'id': 'r1', 'status': 'ASSIGNED', 'orders': []},
           ]),
           200,
         );
