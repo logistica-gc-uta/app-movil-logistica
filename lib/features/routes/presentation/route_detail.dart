@@ -49,7 +49,7 @@ class RouteDetail extends StatelessWidget {
           ],
         ),
         const SizedBox(height: 12),
-        Text(stopsCount(route.stops.length), style: display(context, size: 38)),
+        Text(stopsCount(route.stops.length), style: display(context, size: 28)),
         const SizedBox(height: 22),
         RouteProgressBar(stops: route.stops),
         const SizedBox(height: 14),
@@ -58,6 +58,7 @@ class RouteDetail extends StatelessWidget {
           style: weighted(
             textTheme.bodyLarge,
             FontWeight.w600,
+            size: 14,
             color: RouteTone.ink,
           ),
         ),
@@ -115,7 +116,7 @@ class RouteDetail extends StatelessWidget {
           crossAxisAlignment: CrossAxisAlignment.baseline,
           textBaseline: TextBaseline.alphabetic,
           children: [
-            Expanded(child: Text('Paradas', style: display(context, size: 22))),
+            Expanded(child: Text('Paradas', style: display(context, size: 18))),
             Text(
               '${route.stops.length} en tu ruta',
               style: textTheme.bodySmall?.copyWith(color: RouteTone.muted),

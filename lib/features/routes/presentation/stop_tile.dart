@@ -89,6 +89,7 @@ class StopTile extends StatelessWidget {
                   style: weighted(
                     textTheme.bodyLarge,
                     FontWeight.w600,
+                    size: 15,
                     color: stop.isDelivered || stop.isFailed
                         ? RouteTone.body
                         : RouteTone.ink,
@@ -150,7 +151,7 @@ class StopTile extends StatelessWidget {
           const SizedBox(height: 10),
           Text(
             stop.address,
-            style: display(context, size: 25, color: Colors.white),
+            style: display(context, size: 20, color: Colors.white),
           ),
           if (inTransit) ...[
             const SizedBox(height: 20),
@@ -199,20 +200,26 @@ class StopTile extends StatelessWidget {
   }
 }
 
-/// Línea fina que indica que el pedido va en camino. Es estática: sin
-/// animaciones infinitas que gasten batería.
+/// Línea fina que avanza de forma progresiva hasta la mitad del trayecto
+/// cuando el pedido pasa a «En camino». Se anima una sola vez y se queda
+/// quieta: sin animaciones infinitas que gasten batería.
 class _TransitLine extends StatelessWidget {
   const _TransitLine();
 
   @override
   Widget build(BuildContext context) {
-    return ClipRRect(
-      borderRadius: BorderRadius.circular(2),
-      child: LinearProgressIndicator(
-        value: 0.65,
-        minHeight: 3,
-        color: Colors.white,
-        backgroundColor: Colors.white.withValues(alpha: 0.18),
+    return TweenAnimationBuilder<double>(
+      tween: Tween(begin: 0, end: 0.5),
+      duration: const Duration(milliseconds: 1800),
+      curve: Curves.easeOutCubic,
+      builder: (context, value, _) => ClipRRect(
+        borderRadius: BorderRadius.circular(2),
+        child: LinearProgressIndicator(
+          value: value,
+          minHeight: 3,
+          color: Colors.white,
+          backgroundColor: Colors.white.withValues(alpha: 0.18),
+        ),
       ),
     );
   }

@@ -688,7 +688,7 @@ class _Greeting extends StatelessWidget {
         children: [
           Text(formatLongDate(date).toUpperCase(), style: overline(context)),
           const SizedBox(height: 10),
-          Text('Hola, $name', style: display(context, size: 34)),
+          Text('Hola, $name', style: display(context, size: 26)),
         ],
       ),
     );

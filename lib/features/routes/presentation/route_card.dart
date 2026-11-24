@@ -94,7 +94,7 @@ class RouteCard extends StatelessWidget {
           const SizedBox(height: 14),
           Text(
             stopsCount(route.stops.length),
-            style: display(context, size: 34),
+            style: display(context, size: 26),
           ),
           const SizedBox(height: 20),
           RouteProgressBar(stops: route.stops),
@@ -104,6 +104,7 @@ class RouteCard extends StatelessWidget {
             style: weighted(
               textTheme.bodyLarge,
               FontWeight.w600,
+              size: 14,
               color: RouteTone.ink,
             ),
           ),

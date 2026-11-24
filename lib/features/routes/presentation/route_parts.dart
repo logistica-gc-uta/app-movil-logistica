@@ -183,7 +183,7 @@ class RouteMessage extends StatelessWidget {
         children: [
           Icon(icon, size: 36, color: RouteTone.ink),
           const SizedBox(height: 20),
-          Text(title, style: display(context, size: 26)),
+          Text(title, style: display(context, size: 20)),
           const SizedBox(height: 10),
           Text(
             message,
@@ -241,7 +241,7 @@ class RouteActionButton extends StatelessWidget {
         textStyle: weighted(
           Theme.of(context).textTheme.labelLarge,
           FontWeight.w700,
-          size: 16,
+          size: 15,
         ),
       ),
       child: Row(
@@ -299,7 +299,7 @@ class RouteOutlineButton extends StatelessWidget {
         textStyle: weighted(
           Theme.of(context).textTheme.labelLarge,
           FontWeight.w600,
-          size: 15,
+          size: 14,
         ),
       ),
       child: Row(

@@ -83,7 +83,7 @@ class _FailedVisitSheetState extends State<FailedVisitSheet> {
               Text(
                 'No se pudo entregar',
                 textAlign: TextAlign.center,
-                style: display(context, size: 26),
+                style: display(context, size: 20),
               ),
               const SizedBox(height: 6),
               Text(
@@ -201,7 +201,7 @@ class ConfirmDialog extends StatelessWidget {
               Text(
                 title,
                 textAlign: TextAlign.center,
-                style: display(context, size: 24),
+                style: display(context, size: 20),
               ),
               const SizedBox(height: 10),
               Text(
@@ -266,7 +266,7 @@ class FinishedDialog extends StatelessWidget {
               Text(
                 perfect ? 'Paradas completadas' : 'Paradas finalizadas',
                 textAlign: TextAlign.center,
-                style: display(context, size: 26),
+                style: display(context, size: 20),
               ),
               const SizedBox(height: 10),
               Text(
@@ -337,7 +337,7 @@ class RouteTopBar extends StatelessWidget implements PreferredSizeWidget {
       titleSpacing: AppSpacing.page - 8,
       automaticallyImplyLeading: false,
       title: onBack == null
-          ? Text('SPEEDRUN', style: display(context, size: 20))
+          ? Text('SPEEDRUN', style: display(context, size: 16))
           : TextButton.icon(
               onPressed: onBack,
               icon: const Icon(Icons.arrow_back_rounded, size: 22),

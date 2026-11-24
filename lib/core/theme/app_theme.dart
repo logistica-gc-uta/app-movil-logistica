@@ -187,7 +187,16 @@ ThemeData buildAppTheme({bool invertBrand = false}) {
         minimumSize: const Size.fromHeight(52),
         elevation: 0,
         shape: const RoundedRectangleBorder(borderRadius: AppRadius.button),
-        textStyle: textTheme.labelLarge,
+        textStyle: textTheme.labelLarge?.copyWith(fontSize: 16),
+      ),
+    ),
+    textButtonTheme: TextButtonThemeData(
+      style: TextButton.styleFrom(
+        textStyle: textTheme.labelLarge?.copyWith(
+          fontSize: 15,
+          fontWeight: FontWeight.w600,
+          fontVariations: const [FontVariation.weight(600)],
+        ),
       ),
     ),
     progressIndicatorTheme: ProgressIndicatorThemeData(color: primary),
