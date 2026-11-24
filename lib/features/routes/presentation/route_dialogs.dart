@@ -80,10 +80,15 @@ class _FailedVisitSheetState extends State<FailedVisitSheet> {
                 ),
               ),
               const SizedBox(height: 22),
-              Text('No se pudo entregar', style: display(context, size: 26)),
+              Text(
+                'No se pudo entregar',
+                textAlign: TextAlign.center,
+                style: display(context, size: 26),
+              ),
               const SizedBox(height: 6),
               Text(
                 widget.address,
+                textAlign: TextAlign.center,
                 style: textTheme.bodyMedium?.copyWith(color: RouteTone.muted),
               ),
               const SizedBox(height: 22),
@@ -123,6 +128,7 @@ class _FailedVisitSheetState extends State<FailedVisitSheet> {
               Text(
                 'El pedido no se cancela: la administración decide si se '
                 'reprograma.',
+                textAlign: TextAlign.center,
                 style: textTheme.bodySmall?.copyWith(color: RouteTone.body),
               ),
               const SizedBox(height: 20),
@@ -190,12 +196,17 @@ class ConfirmDialog extends StatelessWidget {
             mainAxisSize: MainAxisSize.min,
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
-              Icon(icon, size: 30, color: RouteTone.ink),
+              Icon(icon, size: 32, color: RouteTone.ink),
               const SizedBox(height: 18),
-              Text(title, style: display(context, size: 24)),
+              Text(
+                title,
+                textAlign: TextAlign.center,
+                style: display(context, size: 24),
+              ),
               const SizedBox(height: 10),
               Text(
                 message,
+                textAlign: TextAlign.center,
                 style: textTheme.bodyMedium?.copyWith(color: RouteTone.body),
               ),
               const SizedBox(height: 24),
@@ -254,6 +265,7 @@ class FinishedDialog extends StatelessWidget {
               const SizedBox(height: 18),
               Text(
                 perfect ? 'Paradas completadas' : 'Paradas finalizadas',
+                textAlign: TextAlign.center,
                 style: display(context, size: 26),
               ),
               const SizedBox(height: 10),
@@ -261,6 +273,7 @@ class FinishedDialog extends StatelessWidget {
                 perfect
                     ? 'Entregaste $total de $total paradas con éxito.'
                     : '${finishedDetail(route)}.',
+                textAlign: TextAlign.center,
                 style: textTheme.bodyMedium?.copyWith(color: RouteTone.body),
               ),
               const SizedBox(height: 14),
@@ -271,6 +284,7 @@ class FinishedDialog extends StatelessWidget {
                     : route.returnedAt == null
                     ? 'Regresa al depósito y confirma tu llegada.'
                     : 'Regreso al depósito confirmado.',
+                textAlign: TextAlign.center,
                 style: textTheme.bodySmall?.copyWith(color: RouteTone.muted),
               ),
               const SizedBox(height: 24),
